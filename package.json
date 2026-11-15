@@ -2,7 +2,7 @@
   "name": "dsh-seam",
   "version": "0.1.0",
   "private": true,
-  "description": "Managed seam-toolchain payload (engine + standard specs + upstream-follow scripts) for DSH plugin repos: consumer-side seam discovery/verification, syncable via `dsh-seam sync`",
+  "description": "DSH 插件开发支持工具：自动发现插件与 DSH 的接口接触面（seam），编译期兼容性检查，并将破坏性变更定位到源码位置",
   "type": "module",
   "bin": {
     "dsh-seam": "./cli.mjs"
