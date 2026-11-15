@@ -297,6 +297,11 @@ function normalizeRepoUrl(url) {
     const ssh = /^ssh:\/\/[^/@]+@([^/:]+)(?::\d+)?\/(.+)$/.exec(candidate)
     if (ssh?.[1] !== undefined && ssh[2] !== undefined) candidate = `https://${ssh[1]}/${ssh[2]}`
   }
+  // ssh.github.com 是 GitHub 的 SSH-over-443 端点而非 https 主机——归一化到
+  // github.com，否则清单里的 source.repo 在 CI 等环境不可达（outdated 只能跳过）。
+  if (/^https:\/\/ssh\.github\.com\//.test(candidate)) {
+    candidate = candidate.replace(/^https:\/\/ssh\.github\.com\//, 'https://github.com/')
+  }
   candidate = candidate.replace(/\.git$/, '')
   if (!/^https?:\/\//.test(candidate)) {
     if (/^[\w.-]+\/[\w.-]+$/.test(candidate)) candidate = `https://github.com/${candidate}`
