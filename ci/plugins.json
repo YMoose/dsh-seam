@@ -1,12 +1,54 @@
 {
   "note": "真实插件语料回归列表（ci/probe-corpus.mjs 逐仓 clone → 安装(--ignore-scripts) → 按级别探测）。level 与工具链接入级别同构：0=零接入第三方仓（六步闭环：补戳→幂等→门禁→基线一致→复原）；1=已提交 coupling.json（戳记断言+只读漂移门禁，verify 为观测）；2=受管同步仓（L1 全部 + .dsh-seam.json 在案 + check --into 离线门禁 + outdated staleness 提示）。声明级别与实际状态不符计为 failure。第三方仓自身的红脸（探针失败、安装失败）是观测记录，只有 dsh-seam 自身断言挂掉才会让 CI 判红。",
   "plugins": [
-    { "repo": "https://github.com/poco-ai/agentero-dsh-plugin", "level": 0 },
+    {
+      "repo": "https://github.com/poco-ai/agentero-dsh-plugin",
+      "level": 0,
+      "history": [
+        {
+          "from": "360a8be5e343d5c5831249fce36f6735c4ba6f99",
+          "to": "f85186d455bb43c40fc08befbb2ce60a435bef59",
+          "dshFrom": "0.2.2-alpha.2",
+          "dshTo": "0.2.2-alpha.3",
+          "expect": "routine",
+          "note": "build(deps): track dsh 0.2.2-alpha.3 types — alpha 间小跳，锚定面无变化（首轮回放实测）"
+        }
+      ]
+    },
     { "repo": "https://github.com/ranxianglei/billion-context", "level": 0 },
     { "repo": "https://github.com/omdsh-dev/DSH-better-sidebar", "level": 0 },
     { "repo": "https://github.com/bowenliang123/dsh-context", "level": 0 },
     { "repo": "https://github.com/op7418/dsh-guizang-design", "level": 0 },
-    { "repo": "https://github.com/dami9527/dsh-image-pathify", "level": 0 },
+    {
+      "repo": "https://github.com/dami9527/dsh-image-pathify",
+      "level": 0,
+      "history": [
+        {
+          "from": "fadb2eb708e2c3e3dcf55f9db28b17635b11e718",
+          "to": "85a88d0a8926d8bbb10c7b594fcb2250b3250e3c",
+          "dshFrom": "0.1.7-rc.2",
+          "dshTo": "0.2.1-rc.2",
+          "expect": "routine",
+          "note": "merge: 适配 dsh 0.2.1-rc.2 — 0.1→0.2 大版本跨越对锚定面零破坏（P@from 与 P@to 的 10 个失败表面逐字相同，手工核对）"
+        },
+        {
+          "from": "85a88d0a8926d8bbb10c7b594fcb2250b3250e3c",
+          "to": "05ef8b3dfe3227f74a4e8af234a37189d7d9435c",
+          "dshFrom": "0.2.1-rc.2",
+          "dshTo": "0.2.2-rc.1",
+          "expect": "routine",
+          "note": "merge: 适配 dsh 0.2.2-rc.1 — 锁 dsh-client-runtime 回落 0.1.1-rc.2（该包停更、退出 lockstep）"
+        },
+        {
+          "from": "dd74b3cc7f461e7705e1732f1c3b7c6a05f52a51",
+          "to": "b86f2c77ffc243fa9788285f633814f91507ea62",
+          "dshFrom": "0.1.0-rc.6",
+          "dshTo": "0.1.1-rc.2",
+          "expect": "routine",
+          "note": "兼容地板 0.1.0-rc.6→0.1.1-rc.2 — 声明层例行 bump"
+        }
+      ]
+    },
     { "repo": "https://github.com/YMoose/dsh-log-enhance", "level": 2 },
     { "repo": "https://github.com/dsh-market/dsh-market", "level": 0 },
     { "repo": "https://github.com/woniuniuniu/dsh-media-desk", "level": 0 },

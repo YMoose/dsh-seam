@@ -38,3 +38,23 @@ jobs:
         with:
           name: corpus-report
           path: corpus-report.txt
+
+  # 历史适配回放（ci/plugins.json 的 history 数组 → 全量 clone → 三点矩阵断言）。
+  # 与语料探测并行：独立 45 分钟预算，npm pack 拉 registry 与 clone 耗时互不挤占。
+  # 失败语义见 ci/probe-history.mjs：curated 断言偏离、工具崩溃、commit/版本腐烂判红。
+  history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '25'
+      - name: replay adaptation commits
+        run: node ci/probe-history.mjs --check --report history-report.txt
+      - name: upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-report
+          path: history-report.txt

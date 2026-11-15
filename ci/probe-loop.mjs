@@ -54,6 +54,15 @@ export function hasDshDeps(root) {
   }
 }
 
+/** 按锁文件识别包管理器并给出候选安装命令（一律 --ignore-scripts；corpus
+ *  探测与 probe-history 的 check 模式共用，保证两种 runner 环境同构）。 */
+export function installCommand(repo) {
+  if (existsSync(join(repo, 'pnpm-lock.yaml'))) return [['pnpm', ['install', '--frozen-lockfile', '--ignore-scripts']], ['pnpm', ['install', '--ignore-scripts']]]
+  if (existsSync(join(repo, 'yarn.lock'))) return [['yarn', ['install', '--frozen-lockfile', '--ignore-scripts']], ['yarn', ['install', '--ignore-scripts']]]
+  if (existsSync(join(repo, 'package.json'))) return [['npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund']]]
+  return []
+}
+
 /** workspace 插件子包判定：展开 package.json workspaces + pnpm-workspace.yaml 的
  *  glob（与 cli.mjs 的发现逻辑同源），存在「非根」且声明 @deepseek-ai 依赖的子目录
  *  时才走 --recursive；根单包仓（含 `packages: ['.']` 反爬升写法）仍按单根探测，

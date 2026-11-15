@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { installCommand } from './probe-loop.mjs'
 import { probeRepo, hasDshDeps } from './probe-loop.mjs'
 
 const DSH_SEAM = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -62,13 +63,8 @@ console.log(`corpus: ${selected.length}/${plugins.length} plugin(s) from ${listP
 console.log(`workspace: ${workspace}`)
 console.log(`dsh-seam: ${DSH_SEAM} (node ${process.version})\n`)
 
-/** 按锁文件识别包管理器；无锁文件但有 package.json 时按 npm 尝试。 */
-function installCommand(repo) {
-  if (existsSync(join(repo, 'pnpm-lock.yaml'))) return [['pnpm', ['install', '--frozen-lockfile', '--ignore-scripts']], ['pnpm', ['install', '--ignore-scripts']]]
-  if (existsSync(join(repo, 'yarn.lock'))) return [['yarn', ['install', '--frozen-lockfile', '--ignore-scripts']], ['yarn', ['install', '--ignore-scripts']]]
-  if (existsSync(join(repo, 'package.json'))) return [['npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund']]]
-  return null
-}
+/** 按锁文件识别包管理器；无锁文件但有 package.json 时按 npm 尝试。
+ *  （installCommand 定义在 probe-loop.mjs，corpus 与 probe-history 共用同一逻辑。） */
 
 const failures = []
 const rows = []
