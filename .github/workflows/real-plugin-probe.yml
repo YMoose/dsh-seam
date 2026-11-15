@@ -1,10 +1,20 @@
 name: real-plugin-probe
 
-# 真实第三方插件语料回归（ci/plugins.json → clone → --ignore-scripts 安装 → 六步探测）。
+# 真实第三方插件语料回归（ci/plugins.json → clone → --ignore-scripts 安装 → 按级别探测）。
 # 失败语义见 ci/probe-corpus.mjs：只有 dsh-seam 自身断言挂掉（补戳/幂等/门禁/基线一致/复原）
 # 或语料列表失效才判红；第三方仓自身的安装失败与探针红脸均为观测记录。
+#
+# 触发：每日定时（UTC 19:30 = 北京时间 03:30，刻意避开整点以躲开 GitHub cron 高峰）
+# + 手动 workflow_dispatch。快速迭代期每天盯一次第三方生态的真实变化。
 on:
+  schedule:
+    - cron: '30 19 * * *'
   workflow_dispatch: {}
+
+# 同一时刻只保留最新一轮（手动/定时撞车时取消旧跑）
+concurrency:
+  group: real-plugin-probe
+  cancel-in-progress: true
 
 permissions:
   contents: read

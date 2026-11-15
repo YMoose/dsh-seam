@@ -22,10 +22,14 @@
 
 ## 运行
 
-- GitHub Actions：`real-plugin-probe` workflow（手动触发）
+- GitHub Actions：`real-plugin-probe` workflow——每日定时（UTC 19:30 / 北京时间 03:30）+ 手动触发；报告上传 artifact
 - 本地全量：`node ci/probe-corpus.mjs`（需网络；逐仓 clone + install，约 10–20 分钟）
 - 本地小范围干跑：`node ci/probe-corpus.mjs --only agentero-dsh-plugin,dsh-ops`
 - 本地对常驻克隆秒级回归：`node <dsh-plugins>/probe-dsh-seam.mjs`（本地薄包装，不进 Git）
+
+> 定时跑的价值：第三方插件仓每天都在变（升级依赖、改源码、push 新仓），每日一轮能在
+> 我们发布前发现工具链对真实生态的回归，也能积累生态观测数据（如 pin `typescript@^7`）。
+> 注意 GitHub 会在仓库 60 天无活动后自动停用定时 workflow——快速迭代期不会遇到。
 
 > **工具链依赖自愈**：runner 启动时若 dsh-seam 自身缺 `node_modules/typescript`，会自动 `npm ci`。这不是可选项——插件生态里已有 pin `typescript@^7`（Go 原生重写，无经典 Compiler API）与不含 typescript 的仓，payload 脚本一旦回退到插件仓的版本就会崩（首轮 CI 的真实教训）。
 
