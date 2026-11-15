@@ -50,6 +50,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '25'
+      - name: install alternate package managers
+        run: npm install -g pnpm@latest yarn@latest
       - name: replay adaptation commits
         run: node ci/probe-history.mjs --check --report history-report.txt
       - name: upload report
