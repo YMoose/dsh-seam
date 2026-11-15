@@ -117,6 +117,7 @@ DSH 生态存在四项客观现实，构成了本工具链各模块解决的具�
 | 13 | 显式声明（L1–L2）编译报错 + 跨插件借用（L3–L4）分类识别 + 显式字段被删报错 + L0 类型断言归入隐含依赖检查 | 在多插件仓实测中，跨插件动态服务借用与局部 `as` 断言普遍存在；分层处理可同时避免漏报与误报（原则 7） | 已落地 |
 | 14 | 未加空值保护的直接读取记录 `pin: true` 并用 `Exclude<…, null \| undefined>` 检查非空；含 `?.`/`!`/类型断言/空值判断时豁免 | 普通赋值无法检测字段从非空变为可空；而 `NonNullable<unknown>` 会退化为 `{}` 导致误报，改用 `Exclude` 保持精确检查（原则 6-2） | 已落地 |
 | 15 | 扫描与验证的目标单位 = 插件包根目录；workspace 依赖提升布局自动向上查找最近的 `node_modules/@deepseek-ai`；多插件包 monorepo 通过显式 `--recursive` 逐包执行 | 契约以单个插件包为单位发布与标识（决策 11 前提）；显式 `--recursive` 避免静默递归，符合原则 6-2 与主流包管理器习惯 | 已落地 |
+| 16 | dist-tag 仅用于“跟随”（`bump` 选取升级目标）；一切兼容性判断、统计与版本发现一律以具体版本号做 semver 比较，不按 tag 名判断；tag 指向的版本不比 `latest` 新时丢弃并记录原因 | 相邻工具 dsh-plugin-health 曾按 tag 名选兼容表版本列：`alpha` 一度指向比 `latest` 旧五天的版本，135 个插件被误判“被拒”，其修复改为 semver 比较 + 丢弃过期 tag 并记录原因；本项目 `verify` 已锚定实际安装版本、`bump` 降级守卫按 semver 比较，本决策将现状固化为明文规则，并约束 Phase 4 巡检的版本发现 | 已落地（规则固化） |
 
 ---
 
@@ -159,6 +160,7 @@ Phase 1            Phase 2              Phase 3              Phase 4
 - **2.2 隐含依赖不绑定源码行号（决策 9）**：支持用 **确认 ID + 所在函数名 + AST 表达式特征** 匹配已登记的隐含依赖，避免增删代码导致行号偏移；所有已登记条目仍在终端具名列出。
 - **2.3 TypeChecker 辅助类型解析**：在保留纯 AST 快速扫描的基础上，对未显式标注类型的局部变量提供基于 `ts.Program` / `TypeChecker` 的可选类型推导并写入 `coupling.json`，减少手写 `overrides`。
 - **2.4 workspace 多插件包递归检查（`--recursive`，已落地）**：自动向上查找 `node_modules/@deepseek-ai` 兼容 workspace 依赖提升布局；`scan --recursive` 与 `verify --recursive` 显式发现子包、打印发现表并汇总退出码。
+- **2.5 单插件多版本验证（`--types-root` / `--upstream`，已设计、择机实现）**：`--types-root <dir>` 将验证锚点从向上查找的 `node_modules` 改为显式指定的类型目录（决策 12 机制的提前落地，可完全离线测试）；`--upstream <版本号|tag>` 从 registry 拉取 `@deepseek-ai/dsh-*` 同版本系列包的 tarball，解出类型声明摆成临时 `--types-root` 后验证，临时目录在 `finally` 中清理。类型闭包按“DSH 系列包同版本 lockstep”以同一版本号拉取，`cordis` 等独立版本包沿用本地已安装类型；tag 输入先解析为具体版本号再参与判断（决策 16）。用于作者在升级前评估“升到目标版本会坏哪里”，不必先改 `package.json` 重装依赖。
 
 ### Phase 3：契约标准化与收集
 
@@ -168,7 +170,7 @@ Phase 1            Phase 2              Phase 3              Phase 4
 
 ### Phase 4：多插件兼容性自动巡检
 
-- **针对上游新版本的批量契约验证（`dsh-seam ecosystem-verify`）**：每当检测到上游 `@deepseek-ai/*` 发布新的 `next` 版本（或通过 `--types-root` 指定本地类型目录），自动用收集到的多份插件契约跑一遍验证，定位破坏性变更并生成兼容性报告。
+- **针对上游新版本的批量契约验证（`dsh-seam ecosystem-verify`）**：每当检测到上游 `@deepseek-ai/*` 发布新的 `next` 版本（或通过 `--types-root` 指定本地类型目录），自动用收集到的多份插件契约跑一遍验证，定位破坏性变更并生成兼容性报告；版本发现按具体版本号 semver 排序与角色标注执行，不按 tag 名判断（决策 16）。
 - **生态 API 使用统计**：汇总各插件对上游字段与事件 hook 的使用频次、常见的隐含依赖以及跨插件服务依赖关系。
 
 ### 阶段完成标准
