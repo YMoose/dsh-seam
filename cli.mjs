@@ -84,6 +84,28 @@ function expandWorkspacePattern(rootDir, pattern) {
   return out
 }
 
+/** pnpm-workspace.yaml 的 `packages:` glob 列表（pnpm 在 DSH 插件生态常见，
+ *  且 package.json 可完全不写 workspaces——不读它就会发现不了任何子包）。
+ *  只解析最常见形态：`packages:` 顶行 + 后续 `- <glob>` 条目；其余按空处理。 */
+function pnpmWorkspaceGlobs(rootDir) {
+  const yamlPath = join(rootDir, 'pnpm-workspace.yaml')
+  if (!existsSync(yamlPath)) return []
+  const globs = []
+  let inPackages = false
+  for (const rawLine of readFileSync(yamlPath, 'utf8').split(/\r?\n/)) {
+    const line = rawLine.replace(/#.*$/, '').trimEnd()
+    if (line.trim() === '') continue
+    if (/^packages:\s*$/.test(line)) { inPackages = true; continue }
+    if (inPackages) {
+      const entry = /^\s*-\s*(.+?)\s*$/.exec(line)
+      if (entry?.[1] === undefined) break // 遇到下一个键：packages 列表结束
+      const glob = entry[1].replace(/^['"]|['"]$/g, '')
+      if (glob !== '') globs.push(glob)
+    }
+  }
+  return globs
+}
+
 /** 读取根 package.json 的 workspaces 声明，产出候选插件包与判定表。 */
 function discoverPluginPackages(rootDir) {
   let rootPkg = null
@@ -92,11 +114,14 @@ function discoverPluginPackages(rootDir) {
   } catch {
     return { rootDeclared: false, candidates: [] }
   }
-  const globs = Array.isArray(rootPkg?.workspaces)
-    ? rootPkg.workspaces
-    : Array.isArray(rootPkg?.workspaces?.packages)
-      ? rootPkg.workspaces.packages
-      : []
+  const globs = [
+    ...(Array.isArray(rootPkg?.workspaces)
+      ? rootPkg.workspaces
+      : Array.isArray(rootPkg?.workspaces?.packages)
+        ? rootPkg.workspaces.packages
+        : []),
+    ...pnpmWorkspaceGlobs(rootDir),
+  ]
   const candidates = []
   const seen = new Set()
   for (const pattern of globs) {

@@ -159,7 +159,7 @@ Phase 1            Phase 2              Phase 3              Phase 4
 - **2.1 同步文件分档（`--profile core | full`）**：`core` 仅同步引擎、规格合并工具、`scan`/`verify` 及其机制测试；`full` 额外包含 `bump`/`baseline`/`compat`。无 profile 字段的已有清单默认按 `full` 处理。
 - **2.2 隐含依赖不绑定源码行号（决策 9）**：支持用 **确认 ID + 所在函数名 + AST 表达式特征** 匹配已登记的隐含依赖，避免增删代码导致行号偏移；所有已登记条目仍在终端具名列出。
 - **2.3 TypeChecker 辅助类型解析**：在保留纯 AST 快速扫描的基础上，对未显式标注类型的局部变量提供基于 `ts.Program` / `TypeChecker` 的可选类型推导并写入 `coupling.json`，减少手写 `overrides`。
-- **2.4 workspace 多插件包递归检查（`--recursive`，已落地）**：自动向上查找 `node_modules/@deepseek-ai` 兼容 workspace 依赖提升布局；`scan --recursive` 与 `verify --recursive` 显式发现子包、打印发现表并汇总退出码。
+- **2.4 workspace 多插件包递归检查（`--recursive`，已落地）**：自动向上查找 `node_modules/@deepseek-ai` 兼容 workspace 依赖提升布局；workspace 声明同时读取 `package.json` 的 `workspaces` 与 `pnpm-workspace.yaml` 的 `packages:`（pnpm 在插件生态常见，且 pnpm 仓常以 `packages: ['.']` 声明根单包）；`scan --recursive` 与 `verify --recursive` 显式发现子包、打印发现表并汇总退出码。
 - **2.5 单插件多版本验证（`--types-root` / `--upstream`，已设计、择机实现）**：`--types-root <dir>` 将验证锚点从向上查找的 `node_modules` 改为显式指定的类型目录（决策 12 机制的提前落地，可完全离线测试）；`--upstream <版本号|tag>` 从 registry 拉取 `@deepseek-ai/dsh-*` 同版本系列包的 tarball，解出类型声明摆成临时 `--types-root` 后验证，临时目录在 `finally` 中清理。类型闭包按“DSH 系列包同版本 lockstep”以同一版本号拉取，`cordis` 等独立版本包沿用本地已安装类型；tag 输入先解析为具体版本号再参与判断（决策 16）。用于作者在升级前评估“升到目标版本会坏哪里”，不必先改 `package.json` 重装依赖。
 
 ### Phase 3：契约标准化与收集
