@@ -118,13 +118,14 @@ DSH 生态存在四项客观现实，构成了本工具链各模块解决的具�
 | 14 | 未加空值保护的直接读取记录 `pin: true` 并用 `Exclude<…, null \| undefined>` 检查非空；含 `?.`/`!`/类型断言/空值判断时豁免 | 普通赋值无法检测字段从非空变为可空；而 `NonNullable<unknown>` 会退化为 `{}` 导致误报，改用 `Exclude` 保持精确检查（原则 6-2） | 已落地 |
 | 15 | 扫描与验证的目标单位 = 插件包根目录；workspace 依赖提升布局自动向上查找最近的 `node_modules/@deepseek-ai`；多插件包 monorepo 通过显式 `--recursive` 逐包执行 | 契约以单个插件包为单位发布与标识（决策 11 前提）；显式 `--recursive` 避免静默递归，符合原则 6-2 与主流包管理器习惯 | 已落地 |
 | 16 | dist-tag 仅用于“跟随”（`bump` 选取升级目标）；一切兼容性判断、统计与版本发现一律以具体版本号做 semver 比较，不按 tag 名判断；tag 指向的版本不比 `latest` 新时丢弃并记录原因 | 相邻工具 dsh-plugin-health 曾按 tag 名选兼容表版本列：`alpha` 一度指向比 `latest` 旧五天的版本，135 个插件被误判“被拒”，其修复改为 semver 比较 + 丢弃过期 tag 并记录原因；本项目 `verify` 已锚定实际安装版本、`bump` 降级守卫按 semver 比较，本决策将现状固化为明文规则，并约束 Phase 4 巡检的版本发现 | 已落地（规则固化） |
+| 17 | typescript 解析守卫：只接受带经典 Compiler API 的 JS 版 typescript（5.x/6.x）；锚点链中途遇到无经典 API 的包（原生 7.x 仅版本存根）则跳过继续向后尝试，全部锚点均不可用时显式报错退出并点名解析到的版本与路径 | typescript@7 npm 包（Go 原生实现）根导出仅 4 行版本存根（`lib/version.cjs`），无 `ts.SyntaxKind`/`createProgram`；插件生态已出现 pin `^7.0.2` 的仓（语料 CI 首轮事故：dsh-context/dsh-market/dsh-wallpaper-engine 以 `Cannot read properties of undefined` 天书崩溃）；Level 2 消费仓的 payload 解析锚点优先命中本仓 node_modules，接入者升级原生版当天即踩雷；`verify` 侧守卫先于 engine 候选加载，同时覆盖 engine 直导与转译两条路径 | 已落地 |
 
 ---
 
 ## 5. 已知工程边界与命名由来
 
 - **隐含依赖的运行时测试只能在插件仓内执行**：脱离插件仓做批量验证时只能汇总其声明信息，无法跨仓运行插件私有测试代码（决策 10）。
-- **TypeScript 版本差异**：扫描器与 `verify` 使用插件仓安装的 `typescript`；不同 TS 版本的 AST 结构与报错信息可能存在细微差异，需在契约中记录实际使用的 TS 版本（原则 3）。
+- **TypeScript 版本差异**：扫描器与 `verify` 使用插件仓安装的 `typescript`，且要求其为带经典 Compiler API 的 JS 版（5.x/6.x）——原生 7.x（Go 实现）根导出只有版本存根，解析到时显式报错点名版本与路径（决策 17）；不同 TS 版本的 AST 结构与报错信息可能存在细微差异，需在契约中记录实际使用的 TS 版本（原则 3）。
 - **插件仓运行环境要求**：Level 2 受管测试在插件仓自己的 `tsconfig`、`node:test`、`tests/` 目录下运行，要求 Node.js ≥ 24.9。
 - **上游刚发版时的短暂时间差**：在 npm 新版本刚发布的分钟级窗口内可能出现探测时间差，靠定时任务重跑自动恢复；后续将统一以 registry 的 `dist.integrity` 哈希作为比对依据。
 - **CI 配置文件不纳入 `sync` 受管范围**：各插件仓的 `.github/workflows` 自主维护，后续外部接入增多后可提供可复用的 GitHub Actions 模板。
@@ -161,6 +162,7 @@ Phase 1            Phase 2              Phase 3              Phase 4
 - **2.3 TypeChecker 辅助类型解析**：在保留纯 AST 快速扫描的基础上，对未显式标注类型的局部变量提供基于 `ts.Program` / `TypeChecker` 的可选类型推导并写入 `coupling.json`，减少手写 `overrides`。
 - **2.4 workspace 多插件包递归检查（`--recursive`，已落地）**：自动向上查找 `node_modules/@deepseek-ai` 兼容 workspace 依赖提升布局；workspace 声明同时读取 `package.json` 的 `workspaces` 与 `pnpm-workspace.yaml` 的 `packages:`（pnpm 在插件生态常见，且 pnpm 仓常以 `packages: ['.']` 声明根单包）；`scan --recursive` 与 `verify --recursive` 显式发现子包、打印发现表并汇总退出码。
 - **2.5 单插件多版本验证（`--types-root` / `--upstream`，已设计、择机实现）**：`--types-root <dir>` 将验证锚点从向上查找的 `node_modules` 改为显式指定的类型目录（决策 12 机制的提前落地，可完全离线测试）；`--upstream <版本号|tag>` 从 registry 拉取 `@deepseek-ai/dsh-*` 同版本系列包的 tarball，解出类型声明摆成临时 `--types-root` 后验证，临时目录在 `finally` 中清理。类型闭包按“DSH 系列包同版本 lockstep”以同一版本号拉取，`cordis` 等独立版本包沿用本地已安装类型；tag 输入先解析为具体版本号再参与判断（决策 16）。用于作者在升级前评估“升到目标版本会坏哪里”，不必先改 `package.json` 重装依赖。
+- **2.6 原生 typescript（7.x Go 实现）兼容观测（远期，只记录不动手）**：生态观测——语料中已有插件仓 pin `typescript ^7.0.2`；其 npm 包根导出仅为版本存根，程序化 API 全部位于 `typescript/unstable/*` 子路径（`unstable/sync`、`unstable/ast/*`），官方明确标注不稳定、可能变更。当前策略已由决策 17 固化：工具链只消费经典 Compiler API，遇到原生版显式报错。是否为 engine 增加 `unstable/*` 原生 API 后端，等两个信号之一再评估：微软将 API 摘掉 `unstable` 标注，或 DSH 官方插件生态整体转向原生版；届时结合每日语料 CI 的观测数据决策。
 
 ### Phase 3：契约标准化与收集
 
