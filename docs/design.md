@@ -109,7 +109,7 @@ DSH 生态存在四项客观现实，构成了本工具链各模块解决的具�
 | 5 | 受管文件单向同步（`dsh-seam` → 插件仓）；`sync` 拒绝覆盖本地未提交改动 | 防止多仓脚本无意识分叉，同时保护插件仓本地临时排障现场 | 已落地 |
 | 6 | 测试切分：工具机制测试随 `payload/` 同步，业务相关测试留在插件仓 | 共享文件不依赖具体插件业务；本仓 `payload/tests/contracts/` 仅作本仓类型检查夹具，不写入插件仓 | 已落地 |
 | 7 | `check`（纯本地离线校验）与 `outdated`（联网新版本提醒）拆分 | 工具发布了新版本不属于插件仓错误，不应让已接入仓库的 CI 报错（原则 6-1） | Phase 2.0 |
-| 8 | 契约文件增加版本元数据（`schemaVersion` + 生成器版本）先于广泛外部推广 | 避免外部仓库提交无版本号的契约后带来长期兼容负担（原则 5） | Phase 2.0 |
+| 8 | 契约文件头部携带版本元数据：`schemaVersion` + `generator: { dshSeam, typescript }` + `generatedAt`；引擎遇到未知 schema 版本时拒绝执行并提示重新生成或升级，缺失（旧版文件）按当前语义继续 | 避免外部仓库提交无版本号的契约后带来长期兼容负担（原则 5）；`generatedAt` 与生成器溯源回应“这份数据是什么时候、哪版工具产的”的追溯需求（采纳自 dsh-plugin-health 作者的社区建议）；`--write` 幂等——契约内容未变时不重写文件，`generatedAt` 始终表示内容实际变化的时间 | 已落地 |
 | 9 | 隐含依赖不绑定源码行号，改为用“确认 ID + 所在函数 + 表达式特征”匹配 | 行号随代码增删频繁偏移、维护成本高；同时拒绝静默 `// ignore` 注释（原则 6-2） | Phase 2.2 |
 | 10 | 跨仓离线验证范围 = 类型契约编译检查 + 隐含依赖的声明汇总 | 隐含依赖的运行时验证依赖插件自身的业务测试代码，脱离插件仓库无法跨仓执行 | Phase 3 起 |
 | 11 | `coupling.json` 随插件 npm 包一起发布，按约定 keyword 自动发现 | 无需自建中心化服务端，契约版本与发布的插件版本天然一致 | Phase 3 |
@@ -154,7 +154,7 @@ Phase 1            Phase 2              Phase 3              Phase 4
 - **2.0 基础条件**：
   - **正式版本 Tag 与可移植清单（原则 3）**：发布首个正式 tag（`v0.1.0`）；`.dsh-seam.json` 改为只记录 `source.repo` + `source.ref` + 文件哈希，移除本机绝对路径 `source.path`；加固 `gitHead()` 解析并在无法获取 commit 时显式报错。
   - **本地校验与新版本提醒拆分（决策 7）**：`check` 改为纯离线门禁，只检查受管文件是否被本地修改；新增 `outdated` 联网提示工具链有新版本，不报错阻断。
-  - **契约版本元数据（决策 8）**：`coupling.json` 头部增加 `schemaVersion` 与 `generator: { dshSeam, typescript }`；引擎遇到未知 schema 版本时拒绝执行并提示升级。
+  - **契约版本元数据（决策 8，已落地）**：`coupling.json` 头部携带 `schemaVersion`、`generator: { dshSeam, typescript }` 与 `generatedAt`；引擎遇到未知 schema 版本时拒绝执行；`--write` 幂等（契约未变不重写）。
   - **环境要求声明**：在文档与 `package.json` 中明确支持的 TypeScript 版本范围、Node.js 版本（≥ 24.9）及 Level 2 对插件仓目录结构的要求。
 - **2.1 同步文件分档（`--profile core | full`）**：`core` 仅同步引擎、规格合并工具、`scan`/`verify` 及其机制测试；`full` 额外包含 `bump`/`baseline`/`compat`。无 profile 字段的已有清单默认按 `full` 处理。
 - **2.2 隐含依赖不绑定源码行号（决策 9）**：支持用 **确认 ID + 所在函数名 + AST 表达式特征** 匹配已登记的隐含依赖，避免增删代码导致行号偏移；所有已登记条目仍在终端具名列出。

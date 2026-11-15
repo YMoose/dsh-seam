@@ -262,7 +262,7 @@ npm test
 ### 模块一：契约扫描与隐含依赖检查（`scan`）
 对应实现：`payload/scripts/analyze-dsh-coupling.mjs`
 
-- **显式依赖提取**：基于 TypeScript AST 扫描 `src/` 与 `tests/`，生成结构化契约文件 `coupling.json`，包含 7 类信息：
+- **显式依赖提取**：基于 TypeScript AST 扫描 `src/` 与 `tests/`，生成结构化契约文件 `coupling.json`，文件头部携带溯源元数据（`schemaVersion`、`generator: { dshSeam, typescript }`、`generatedAt`，见 [design.md 决策 8](docs/design.md#4-关键架构决策记录)；`--write` 在契约内容未变时不重写文件），契约本体包含 7 类信息：
   1. `packages`：从 `@deepseek-ai/*` 导入的类型与值符号；
   2. `injectedServices`：声明注入或访问的 Cordis `Context` 服务；
   3. `srcHooks` / `testHooks`：`ctx.on()` / `ctx.emit()` 事件名称与回调参数形态；
