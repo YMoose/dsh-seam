@@ -320,6 +320,7 @@ npm test
 ### 5.2 适用范围与职责划分（工具链 vs 插件仓）
 
 - **适用范围**：面向安装 `@deepseek-ai/cordis` 及 `@deepseek-ai/*` 类型包、通过 `ctx` 与声明合并接入宿主的 Cordis 进程内插件。外围独立 MCP Server、外部 CLI 或未安装 `@deepseek-ai/*` 的纯鸭子类型仓库不在服务范围内，`verify` 会自动以 `0/0 probes compile clean (skipped)` 正常退出（`exit 0`）。
+- **与相邻工具的分工**：`dsh-seam` 站在插件作者侧做编译期检查（上游改了什么、坏在源码哪一行）；升级后插件能否正常加载的用户侧运行时检查，见社区项目 [dsh-plugin-health](https://github.com/EasonMWS/dsh-plugin-health)（在临时目录真装真启动插件，提供每日公开兼容表与 PR 兼容矩阵 Action）。两者的失败模式不重叠，可同时使用。
 - **文件所有权划分**：
 
 | 文件类别 | 具体文件 / 模块 | 所有权与职责边界 |
