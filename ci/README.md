@@ -17,6 +17,8 @@
 - 本地小范围干跑：`node ci/probe-corpus.mjs --only agentero-dsh-plugin,dsh-ops`
 - 本地对常驻克隆秒级回归：`node <dsh-plugins>/probe-dsh-seam.mjs`（本地薄包装，不进 Git）
 
+> **工具链依赖自愈**：runner 启动时若 dsh-seam 自身缺 `node_modules/typescript`，会自动 `npm ci`。这不是可选项——插件生态里已有 pin `typescript@^7`（Go 原生重写，无经典 Compiler API）与不含 typescript 的仓，payload 脚本一旦回退到插件仓的版本就会崩（首轮 CI 的真实教训）。
+
 ## 失败语义（与本地脚本一致）
 
 第三方仓的红脸（探针失败、安装失败）是**观测记录**，不是 CI 失败；只有 dsh-seam 自身断言（schemaVersion/generator/generatedAt 齐全、幂等字节不变、漂移门禁绿、戳记前后 verify 基线一致、工作区零残留复原）或语料列表失效才判红。

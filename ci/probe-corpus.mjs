@@ -25,6 +25,19 @@ import { probeRepo, hasDshDeps } from './probe-loop.mjs'
 const DSH_SEAM = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const CLI = join(DSH_SEAM, 'cli.mjs')
 
+/** 工具链自身的 typescript 必须就位。payload 脚本的解析锚点优先落在 dsh-seam 自己的
+ *  node_modules（本地开发机一直如此）；CI 检出后若不装依赖，解析会回退到插件仓 pin
+ *  的 typescript——生态里已有 ^7.0.2（Go 原生重写，无经典 Compiler API，ts.SyntaxKind
+ *  不存在）与干脆不含 typescript 的仓，两种都会崩。装不上就大声失败，不静默降级。 */
+if (!existsSync(join(DSH_SEAM, 'node_modules', 'typescript'))) {
+  console.log('dsh-seam dependencies missing — running npm ci (pins the verified typescript toolchain)')
+  const installed = spawnSync('npm', ['ci', '--no-audit', '--no-fund'], { encoding: 'utf8', timeout: 300_000, cwd: DSH_SEAM })
+  if ((installed.status ?? 1) !== 0) {
+    console.error(`cannot install dsh-seam dependencies:\n${installed.stdout}\n${installed.stderr}`)
+    process.exit(2)
+  }
+}
+
 function argValue(flag) {
   const index = process.argv.indexOf(flag)
   return index === -1 ? undefined : process.argv[index + 1]
