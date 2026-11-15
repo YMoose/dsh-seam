@@ -49,7 +49,11 @@ const workspaceParent = existsSync('/tmp/opencode') ? '/tmp/opencode' : tmpdir()
 const workspace = resolve(argValue('--workspace') ?? mkdtempSync(join(workspaceParent, 'dsh-corpus-')))
 
 const { plugins } = JSON.parse(readFileSync(listPath, 'utf8'))
-const selected = plugins.filter(url => only === undefined || only.includes(basename(url.replace(/\.git$/, ''))))
+/** 条目两种形态：字符串（默认 level 0）或 { repo, level }。 */
+const entries = plugins.map(entry => (typeof entry === 'string'
+  ? { repo: entry, level: 0 }
+  : { repo: entry.repo, level: entry.level ?? 0 }))
+const selected = entries.filter(({ repo: url }) => only === undefined || only.includes(basename(url.replace(/\.git$/, ''))))
 if (selected.length === 0) {
   console.error(`no plugin selected (list: ${listPath}, --only: ${String(only)})`)
   process.exit(2)
@@ -69,7 +73,7 @@ function installCommand(repo) {
 const failures = []
 const rows = []
 
-for (const url of selected) {
+for (const { repo: url, level } of selected) {
   const name = basename(url.replace(/\.git$/, ''))
   const repo = join(workspace, name)
 
@@ -100,8 +104,8 @@ for (const url of selected) {
     console.log(`  ~ ${name}: install failed (${installNote}) — probing without dependencies`)
   }
 
-  // 3. 六步探测（无依赖时 probe 内部走 skip 路径）
-  const { row, failures: repoFailures, notes } = probeRepo(repo, CLI)
+  // 3. 按接入级别探测（0=六步闭环；1/2=接入者只读断言；无依赖时 L0 内部走 skip 路径）
+  const { row, failures: repoFailures, notes } = probeRepo(repo, CLI, level)
   if (!installed && commands !== null && hasDshDeps(repo) === false) {
     row[2] = `install failed → ${row[2]}`
   }
