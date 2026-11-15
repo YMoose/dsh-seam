@@ -100,8 +100,9 @@ npm run check       # 依次执行 typecheck 与 test（提交前必跑）
 
 ### 3.3 同步消费仓与 Git 操作规范
 
-1. **先 `git commit`，后 `sync`**：`node cli.mjs sync` 会将 `payload/` 工作区文件复制到目标插件仓，但 `.dsh-seam.json` 中的 `source.gitHead` 读取的是 `dsh-seam` 当前的 `HEAD` commit。因此修改 `payload/` 后，必须先在本仓完成 `git commit`，再执行 `node cli.mjs sync --into <consumerDir>`，否则插件仓记录的 commit 哈希会落后一拍。
-2. **验证真实消费仓**：
+1. **先 `git commit`，后 `sync`**：`node cli.mjs sync` 会将 `payload/` 工作区文件复制到目标插件仓，但 `.dsh-seam.json` 中的 `source.ref` 读取的是 `dsh-seam` 当前的 `HEAD` commit。因此修改 `payload/` 后，必须先在本仓完成 `git commit`，再执行 `node cli.mjs sync --into <consumerDir>`，否则插件仓记录的 commit 哈希会落后一拍。
+2. **清单可移植与命令职责边界（决策 7）**：`.dsh-seam.json` 只记录 `source.repo`（归一化 https 仓库地址）+ `source.ref` + 文件哈希，严禁写回本机绝对路径；`gitHead()`/仓库地址解析失败时 `sync` 必须显式报错退出，绝不写入 `unknown` 占位。`check` 是纯离线门禁（只比对哈希，不定位源仓、不联网、不接受 `--source`）；`outdated` 是 advisory（永不阻断退出）；「上一次 sync 落后来源仓」的提示只归 `sync`。
+3. **验证真实消费仓**：
    - Level 2 消费仓（`../obsystem/dsh-log-enhance`）：同步后在其目录运行 `npm test` 与 `node /path/to/dsh-seam/cli.mjs check`。
    - Level 1 / Workspace 消费仓（如 `dsh-editor-socket`）：运行 `scan --check` 与 `verify`（或 `--recursive`）确认检查全部通过。
    - 第三方插件仓实测：安装依赖一律加 `--ignore-scripts`（`npm install --ignore-scripts`）。

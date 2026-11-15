@@ -108,7 +108,7 @@ DSH 生态存在四项客观现实，构成了本工具链各模块解决的具�
 | 4 | 独立工具仓 + Git Tag 固定版本 + 支持直接运行与同步受管文件两种方式 | 不污染插件仓 `package.json` 依赖与 lockfile（原则 3），同时兼顾零配置试用与深度接入 | 已落地 |
 | 5 | 受管文件单向同步（`dsh-seam` → 插件仓）；`sync` 拒绝覆盖本地未提交改动 | 防止多仓脚本无意识分叉，同时保护插件仓本地临时排障现场 | 已落地 |
 | 6 | 测试切分：工具机制测试随 `payload/` 同步，业务相关测试留在插件仓 | 共享文件不依赖具体插件业务；本仓 `payload/tests/contracts/` 仅作本仓类型检查夹具，不写入插件仓 | 已落地 |
-| 7 | `check`（纯本地离线校验）与 `outdated`（联网新版本提醒）拆分 | 工具发布了新版本不属于插件仓错误，不应让已接入仓库的 CI 报错（原则 6-1） | Phase 2.0 |
+| 7 | `check`（纯本地离线校验）与 `outdated`（联网新版本提醒）拆分；有阻断权力的检查只允许基于消费仓自身、离线且确定，一切涉及外部世界的状态只提示不阻断 | 工具发布了新版本不属于插件仓错误，不应让已接入仓库的 CI 报错（原则 6-1）；`check` 不依赖 dsh-seam 源仓存在，外部 fork 的消费仓与无网 CI 都能跑门禁 | 已落地 |
 | 8 | 契约文件头部携带版本元数据：`schemaVersion` + `generator: { dshSeam, typescript }` + `generatedAt`；引擎遇到未知 schema 版本时拒绝执行并提示重新生成或升级，缺失（旧版文件）按当前语义继续 | 避免外部仓库提交无版本号的契约后带来长期兼容负担（原则 5）；`generatedAt` 与生成器溯源回应“这份数据是什么时候、哪版工具产的”的追溯需求（采纳自 dsh-plugin-health 作者的社区建议）；`--write` 幂等——契约内容未变时不重写文件，`generatedAt` 始终表示内容实际变化的时间 | 已落地 |
 | 9 | 隐含依赖不绑定源码行号，改为用“确认 ID + 所在函数 + 表达式特征”匹配 | 行号随代码增删频繁偏移、维护成本高；同时拒绝静默 `// ignore` 注释（原则 6-2） | Phase 2.2 |
 | 10 | 跨仓离线验证范围 = 类型契约编译检查 + 隐含依赖的声明汇总 | 隐含依赖的运行时验证依赖插件自身的业务测试代码，脱离插件仓库无法跨仓执行 | Phase 3 起 |
@@ -152,8 +152,8 @@ Phase 1            Phase 2              Phase 3              Phase 4
 ### Phase 2：外部插件低成本接入（当前推进）
 
 - **2.0 基础条件**：
-  - **正式版本 Tag 与可移植清单（原则 3）**：发布首个正式 tag（`v0.1.0`）；`.dsh-seam.json` 改为只记录 `source.repo` + `source.ref` + 文件哈希，移除本机绝对路径 `source.path`；加固 `gitHead()` 解析并在无法获取 commit 时显式报错。
-  - **本地校验与新版本提醒拆分（决策 7）**：`check` 改为纯离线门禁，只检查受管文件是否被本地修改；新增 `outdated` 联网提示工具链有新版本，不报错阻断。
+  - **正式版本 Tag 与可移植清单（原则 3，已落地）**：已发布首个正式 tag（`v0.1.0`）；`.dsh-seam.json` 只记录 `source.repo`（归一化 https 仓库地址）+ `source.ref`（来源 commit）+ 文件哈希，不含本机绝对路径；`gitHead()` 在无法获取 commit 或仓库地址时显式报错拒绝 sync（绝不写入 `unknown` 占位）。
+  - **本地校验与新版本提醒拆分（决策 7，已落地）**：`check` 为纯离线门禁，只比对受管文件哈希，不定位 dsh-seam 源仓、不联网；`outdated` 联网（`git ls-remote`）提示上游 HEAD 与 semver 最新 tag（决策 16：tag 先解析成版本号再比较），永不阻断退出；上一次 sync 落后来源仓多少由 `sync` 提示。
   - **契约版本元数据（决策 8，已落地）**：`coupling.json` 头部携带 `schemaVersion`、`generator: { dshSeam, typescript }` 与 `generatedAt`；引擎遇到未知 schema 版本时拒绝执行；`--write` 幂等（契约未变不重写）。
   - **环境要求声明**：在文档与 `package.json` 中明确支持的 TypeScript 版本范围、Node.js 版本（≥ 24.9）及 Level 2 对插件仓目录结构的要求。
 - **2.1 同步文件分档（`--profile core | full`）**：`core` 仅同步引擎、规格合并工具、`scan`/`verify` 及其机制测试；`full` 额外包含 `bump`/`baseline`/`compat`。无 profile 字段的已有清单默认按 `full` 处理。

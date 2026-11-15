@@ -62,8 +62,9 @@ usage: dsh-seam <command> [options]
 | **直接运行** | `bump [--root <dir>] [--check \| --print-only] [--keep-floor]` | 检查（`--check`）或统一升级 `@deepseek-ai/dsh-*` 依赖组与 `engines.dsh` 版本范围 |
 | **直接运行** | `compat [--root <dir>] [--manifest <package.json>]` | 调用 `@deepseek-ai/dsh-app-boot` 官方接口校验 `engines.dsh` 版本兼容范围配置是否正确 |
 | **直接运行** | `baseline [--root <dir>]` | 提取 `node_modules` 中已安装 `@deepseek-ai/*` 的版本与 `integrity` 哈希写入 `baseline.json` |
-| **仓库同步** | `sync [--into <consumerDir>] [--source <thisRepo>]` | 将共享脚本与测试文件同步到插件仓库，并写入 `.dsh-seam.json` 清单 |
-| **仓库同步** | `check [--into <consumerDir>] [--source <thisRepo>]` | 校验插件仓库中的受管文件哈希与 `.dsh-seam.json` 清单是否一致 |
+| **仓库同步** | `sync [--into <consumerDir>] [--source <thisRepo>]` | 将共享脚本与测试文件同步到插件仓库，并写入可移植的 `.dsh-seam.json` 清单（repo + ref + 哈希） |
+| **仓库同步** | `check [--into <consumerDir>]` | 纯离线门禁：校验插件仓库中的受管文件哈希与 `.dsh-seam.json` 清单是否一致（不依赖源仓、不联网） |
+| **仓库同步** | `outdated [--into <consumerDir>]` | advisory 提示上游默认分支与最新 tag 相对当前 pin 的状态（联网，永不阻断退出） |
 
 ### 2.2 `sync` 同步文件清单（`payload/` 映射）
 
@@ -293,9 +294,9 @@ npm test
 ### 模块四：受管文件同步与完整性检查（`sync` / `check`）
 对应实现：`cli.mjs`
 
-- **受管文件同步（`sync`）**：将 `payload/` 下的共享脚本、引擎与机制测试复制到插件仓库，并在 `.dsh-seam.json` 中记录源版本信息与每个受管文件的 `sha256` 哈希。若检测到目标文件存在未提交回上游的本地修改，`sync` 会拒绝覆盖以保护本地排障现场。
-- **受管文件完整性校验（`check`）**：校验插件仓内的受管文件是否与 `.dsh-seam.json` 及当前工具版本一致，防止多仓库脚本内容无意识分叉。
-  > **当前行为与 Phase 2 改进说明**：① `.dsh-seam.json` 的 `source.path` 目前记录执行 `sync` 时的本机路径，Phase 2 将改为只记录仓库地址与版本号；② `check` 目前在受管文件落后于当前运行的 `dsh-seam` 版本时也会报错（`stale managed file` / `source commit moved`），因此 `check` 需与 `sync` 使用同一个 `#<ref>`，Phase 2 将拆分为纯本地校验 `check` 与新版本提醒 `outdated`（[design.md 决策 7](docs/design.md#4-关键架构决策记录)）。
+- **受管文件同步（`sync`）**：将 `payload/` 下的共享脚本、引擎与机制测试复制到插件仓库，并在 `.dsh-seam.json` 中记录来源仓库地址（`source.repo`，归一化为 https 形式）、来源提交（`source.ref`）与每个受管文件的 `sha256` 哈希——清单完全可移植，不含任何本机绝对路径。若检测到目标文件存在未提交回上游的本地修改，`sync` 会拒绝覆盖以保护本地排障现场；再次 sync 时会提示上一次同步落后来源仓多少个提交。
+- **受管文件完整性校验（`check`）**：**纯离线门禁**——只比对插件仓内受管文件与 `.dsh-seam.json` 记录的哈希，不定位 dsh-seam 源仓、不联网（[design.md 决策 7](docs/design.md#4-关键架构决策记录)）。外部 fork 的消费仓、无网 CI 均可直接运行；旧格式清单（含 `source.path`）兼容放行并提示重新 sync 补记溯源。
+- **上游新版本提醒（`outdated`）**：联网（`git ls-remote`）提示上游默认分支 HEAD 与 semver 最新 tag 相对当前 pin 的状态。advisory 输出不具备阻断权力：网络不可达只提示跳过，永远退出 0；仅缺清单等用法错误允许非零退出。
 
 ---
 

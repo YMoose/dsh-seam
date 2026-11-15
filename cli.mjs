@@ -4,8 +4,10 @@
  * 支持通过本地路径或 `npx github:YMoose/dsh-seam` 双轨运行：
  *
  *   轨道 A（插件仓常驻受管同步，零额外 npm 依赖轴）：
- *     sync     [--into <consumerDir>] [--source <thisRepo>]
- *     check    [--into <consumerDir>] [--source <thisRepo>]
+ *     sync     [--into <consumerDir>] [--source <thisRepo>]   —— 写入受管文件与可移植清单
+ *                                                             （source.repo + source.ref + 哈希，无本机路径）
+ *     check    [--into <consumerDir>]                        —— 纯离线门禁：只比对受管文件哈希
+ *     outdated [--into <consumerDir>]                        —— 联网提示上游新版本（advisory，永不阻断）
  *
  *   轨道 B（直接运行：Level 0 零配置体检 / Level 1 显式门禁 / 多契约批量校验）：
  *     scan     [--root <repoDir>] [--write | --check | --json] [--recursive]
@@ -33,7 +35,8 @@ const MANIFEST = '.dsh-seam.json'
 const DEFAULT_SOURCE = dirname(fileURLToPath(import.meta.url))
 const USAGE = `usage: dsh-seam <command> [options]
   sync     [--into <consumerDir>] [--source <thisRepo>]          install/refresh the managed payload
-  check    [--into <consumerDir>] [--source <thisRepo>]          verify managed files against the manifest and payload
+  check    [--into <consumerDir>]                                offline gate: managed files match the manifest hashes
+  outdated [--into <consumerDir>]                                advisory upstream version notice (never blocks)
   scan     [--root <repoDir>] [--write | --check | --json] [--recursive]  scan source coupling and implicit-contract suspects
   verify   [--repo <repoDir>] [<coupling.json> ...] [--recursive]         verify coupling contracts (scans in-memory if no coupling.json)
   bump     [--root <repoDir>] [--check | --print-only] [--keep-floor]  check or advance the @deepseek-ai/dsh-* dependency group
@@ -194,7 +197,9 @@ function readManifest(into) {
   return parsed
 }
 
-/** HEAD commit via plain .git reads, with fallback to npm/npx tarball metadata in package.json. */
+/** HEAD commit via plain .git reads, with fallback to npm/npx tarball metadata in
+ *  package.json. Returns null when unresolvable — callers must fail loudly and
+ *  never record a placeholder like 'unknown' (design.md Phase 2.0). */
 function gitHead(source) {
   try {
     let gitDir = join(source, '.git')
@@ -231,14 +236,123 @@ function gitHead(source) {
         if (match?.[1] !== undefined) return match[1]
       }
     }
-    return 'unknown'
-  } catch { return 'unknown' }
+    return null
+  } catch { return null }
+}
+
+/** origin URL via `git remote get-url`, falling back to package.json repository/_resolved
+ *  metadata for npx tarball checkouts. Returns null when unresolvable. */
+function gitRemoteUrl(source) {
+  const probed = spawnSync('git', ['-C', source, 'remote', 'get-url', 'origin'], { encoding: 'utf8' })
+  if (probed.status === 0 && typeof probed.stdout === 'string' && probed.stdout.trim() !== '') {
+    return probed.stdout.trim()
+  }
+  const pkgPath = join(source, 'package.json')
+  if (!existsSync(pkgPath)) return null
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
+    const repository = pkg.repository
+    if (typeof repository === 'string' && repository.trim() !== '') return repository.trim()
+    if (typeof repository?.url === 'string' && repository.url.trim() !== '') return repository.url.trim()
+    if (typeof pkg._resolved === 'string') return pkg._resolved
+  } catch {}
+  return null
+}
+
+/** Normalize a git remote / repository field to a portable https URL.
+ *  scp-like and ssh forms collapse to https; `git+` prefixes and `.git` suffixes
+ *  drop off; codeload tarball URLs map back to their repository page. Anything
+ *  not URL-like (e.g. a local path used as a test remote) stays verbatim. */
+function normalizeRepoUrl(url) {
+  const raw = url.trim()
+  let candidate = raw.replace(/^git\+/, '')
+  const scp = /^[\w.-]+@([\w.-]+):(.+)$/.exec(candidate)
+  if (scp?.[1] !== undefined && scp[2] !== undefined) candidate = `https://${scp[1]}/${scp[2]}`
+  else if (candidate.startsWith('ssh://')) {
+    const ssh = /^ssh:\/\/[^/@]+@([^/:]+)(?::\d+)?\/(.+)$/.exec(candidate)
+    if (ssh?.[1] !== undefined && ssh[2] !== undefined) candidate = `https://${ssh[1]}/${ssh[2]}`
+  }
+  candidate = candidate.replace(/\.git$/, '')
+  if (!/^https?:\/\//.test(candidate)) {
+    if (/^[\w.-]+\/[\w.-]+$/.test(candidate)) candidate = `https://github.com/${candidate}`
+    else return raw
+  }
+  return candidate.replace(
+    /^https:\/\/codeload\.github\.com\/([\w.-]+)\/([\w.-]+)\/tar\.gz\/.*$/,
+    'https://github.com/$1/$2',
+  )
+}
+
+/** The repo recorded in the manifest: normalized origin URL, or null. */
+function resolveSourceRepo(source) {
+  const url = gitRemoteUrl(source)
+  return url === null ? null : normalizeRepoUrl(url)
+}
+
+/** Human-facing repo label: `owner/name` for URLs, verbatim for other forms. */
+function displayRepo(repo) {
+  return repo.replace(/^https?:\/\/[^/]+\//, '')
+}
+
+const shortRef = ref => ref.slice(0, 7)
+
+/** Semver comparison for tags (design.md decision 16): tags are parsed into
+ *  concrete versions before any comparison; unparseable tags never rank.
+ *  Returns positive when a > b, negative when a < b, 0 on equality. */
+function compareSemver(a, b) {
+  const parse = tag => {
+    const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(tag)
+    return match === null ? null : {
+      core: [Number(match[1]), Number(match[2]), Number(match[3])],
+      pre: match[4] === undefined ? [] : match[4].split('.'),
+    }
+  }
+  const left = parse(a)
+  const right = parse(b)
+  if (left === null || right === null) return 0
+  for (let index = 0; index < 3; index += 1) {
+    if (left.core[index] !== right.core[index]) return left.core[index] - right.core[index]
+  }
+  if (left.pre.length === 0 && right.pre.length === 0) return 0
+  if (left.pre.length === 0) return 1 // release > prerelease
+  if (right.pre.length === 0) return -1
+  for (let index = 0; index < Math.max(left.pre.length, right.pre.length); index += 1) {
+    const l = left.pre[index]
+    const r = right.pre[index]
+    if (l === undefined) return -1
+    if (r === undefined) return 1
+    const lNum = /^\d+$/.test(l) ? Number(l) : null
+    const rNum = /^\d+$/.test(r) ? Number(r) : null
+    if (lNum !== null && rNum !== null) { if (lNum !== rNum) return lNum - rNum; continue }
+    if (lNum !== null) return -1 // numeric identifiers rank below alphanumeric
+    if (rNum !== null) return 1
+    if (l !== r) return l < r ? -1 : 1
+  }
+  return 0
 }
 
 function sync(into, source) {
   const entries = whitelist(source)
   if (entries.length === 0) { console.error(`no payload files under ${join(source, 'payload')}`); process.exit(1) }
+  const ref = gitHead(source)
+  if (ref === null) {
+    console.error(`REFUSED: cannot resolve the dsh-seam source commit (no .git HEAD and no tarball metadata in package.json) — sync from a git clone or a published tarball`)
+    process.exit(1)
+  }
+  const repo = resolveSourceRepo(source)
+  if (repo === null) {
+    console.error(`REFUSED: cannot resolve the dsh-seam source repository (no git origin and no repository/_resolved in package.json) — sync from a git clone or add a repository field`)
+    process.exit(1)
+  }
   const previous = readManifest(into)
+  const previousRef = typeof previous?.source?.ref === 'string' ? previous.source.ref
+    : typeof previous?.source?.commit === 'string' ? previous.source.commit : undefined
+  if (previousRef !== undefined && previousRef !== ref && /^[0-9a-f]{7,40}$/i.test(previousRef) && /^[0-9a-f]{7,40}$/i.test(ref)) {
+    // 同步状态归 sync 管（决策 7）：上一次 sync 以来源仓前进了多少，此处提示并更新。
+    const counted = spawnSync('git', ['-C', source, 'rev-list', '--count', `${previousRef}..${ref}`], { encoding: 'utf8' })
+    const behind = counted.status === 0 ? counted.stdout.trim() : ''
+    console.log(`~ previous sync ${shortRef(previousRef)} was ${/^\d+$/.test(behind) ? `${behind} commit(s) ` : ''}behind HEAD ${shortRef(ref)} — updating`)
+  }
   const hashes = {}
   const writes = []
   for (const [payloadRel, consumerRel] of entries) {
@@ -281,11 +395,14 @@ function sync(into, source) {
     console.log(`  - ${consumerRel} (no longer managed — removed)`)
   }
   const sorted = Object.fromEntries(Object.entries(hashes).sort(([a], [b]) => (a < b ? -1 : 1)))
-  writeFileSync(join(into, MANIFEST), `${JSON.stringify({ source: { path: resolve(source), commit: gitHead(source) }, files: sorted }, null, 2)}\n`)
-  console.log(`synced ${Object.keys(sorted).length} managed file(s) into ${resolve(into)} (source ${resolve(source)}@${gitHead(source)})`)
+  writeFileSync(join(into, MANIFEST), `${JSON.stringify({ source: { repo, ref }, files: sorted }, null, 2)}\n`)
+  console.log(`synced ${Object.keys(sorted).length} managed file(s) into ${resolve(into)} (pinned to ${displayRepo(repo)}@${shortRef(ref)})`)
 }
 
-function check(into, sourceOverride) {
+/** 纯离线门禁（决策 7）：只回答「消费仓自己的受管文件有没有被本地修改」。
+ *  不定位 dsh-seam 源仓、不联网、不做新旧比对——同步状态归 sync、上游版本归 outdated。
+ *  有阻断权力的检查只允许基于消费仓自身、离线且确定。 */
+function check(into) {
   const manifest = readManifest(into)
   if (manifest === undefined) { console.error(`no ${MANIFEST} in ${resolve(into)} — run dsh-seam sync first`); process.exit(1) }
   const recordedEntries = Object.entries(manifest.files)
@@ -299,39 +416,63 @@ function check(into, sourceOverride) {
     if (!existsSync(target)) problems.push(`missing managed file: ${consumerRel}`)
     else if (sha256(readFileSync(target)) !== hash) problems.push(`drift (locally modified): ${consumerRel}`)
   }
-  const recordedSource = manifest.source?.path
-  const source = sourceOverride
-    ?? (typeof recordedSource === 'string' && existsSync(join(recordedSource, 'payload')) ? recordedSource : DEFAULT_SOURCE)
-  if (typeof source !== 'string' || !existsSync(join(source, 'payload'))) {
-    problems.push(`cannot locate payload source (${String(source)}) — pass --source <thisRepo> or run dsh-seam sync`)
-  } else {
-    const current = new Map(
-      whitelist(source).map(([payloadRel, consumerRel]) => [
-        consumerRel,
-        sha256(readFileSync(join(source, 'payload', payloadRel))),
-      ]),
-    )
-    for (const [consumerRel, hash] of recordedEntries) {
-      if (!current.has(consumerRel)) {
-        problems.push(`no longer in the payload whitelist: ${consumerRel} — run dsh-seam sync`)
-      } else if (current.get(consumerRel) !== hash) {
-        problems.push(`stale managed file (payload updated since last sync): ${consumerRel} — run dsh-seam sync`)
-      }
-    }
-    for (const consumerRel of current.keys()) {
-      if (manifest.files[consumerRel] === undefined) {
-        problems.push(`shipped in the payload but not synced: ${consumerRel} — run dsh-seam sync`)
-      }
-    }
-    const head = gitHead(source)
-    if (sourceOverride === undefined && manifest.source?.commit !== undefined
-      && manifest.source.commit !== 'unknown' && head !== 'unknown'
-      && manifest.source.commit !== head) {
-      problems.push(`source commit moved (${manifest.source.commit} -> ${head}) — run dsh-seam sync`)
-    }
-  }
   if (problems.length > 0) { for (const line of problems) console.error(`  ✖ ${line}`); process.exit(1) }
-  console.log(`${resolve(into)}: ${recordedEntries.length} managed file(s) match ${MANIFEST} (source ${source}@${manifest.source?.commit})`)
+  const repo = manifest.source?.repo
+  const ref = manifest.source?.ref ?? manifest.source?.commit
+  if (repo === undefined) {
+    console.log(`~ legacy ${MANIFEST} (no source.repo recorded) — re-run dsh-seam sync to stamp repo@ref provenance`)
+  }
+  const pinned = typeof repo === 'string' && typeof ref === 'string'
+    ? ` (pinned to ${displayRepo(repo)}@${shortRef(ref)})`
+    : typeof ref === 'string' ? ` (pinned to ${shortRef(ref)})` : ''
+  console.log(`${resolve(into)}: ${recordedEntries.length} managed file(s) match ${MANIFEST}${pinned}`)
+}
+
+/** 联网版本提醒（决策 7）：`git ls-remote` 读上游 HEAD 与 semver 最新 tag（决策 16：
+ *  tag 先解析成具体版本号再比较）。advisory 输出不具备阻断权力——网络不可达只提示
+ *  跳过，永远 exit 0；仅用法错误（无清单）允许非零退出。 */
+function outdated(into) {
+  const manifest = readManifest(into)
+  if (manifest === undefined) { console.error(`no ${MANIFEST} in ${resolve(into)} — run dsh-seam sync first`); process.exit(1) }
+  const repo = manifest.source?.repo
+  const ref = manifest.source?.ref ?? manifest.source?.commit
+  if (typeof repo !== 'string' || repo.trim() === '') {
+    console.log(`~ legacy ${MANIFEST} (no source.repo recorded) — re-run dsh-seam sync first`)
+    return
+  }
+  console.log(`pinned: ${displayRepo(repo)}${typeof ref === 'string' ? `@${shortRef(ref)}` : ' (no ref recorded)'}`)
+  const remote = spawnSync('git', ['ls-remote', repo], { encoding: 'utf8', timeout: 30_000 })
+  if (remote.status !== 0 || typeof remote.stdout !== 'string') {
+    console.log(`outdated: version check skipped (cannot reach ${repo})`)
+    return
+  }
+  const refs = new Map()
+  for (const line of remote.stdout.split(/\r?\n/)) {
+    const [sha, name] = line.trim().split(/\s+/)
+    if (sha !== undefined && name !== undefined) refs.set(name, sha)
+  }
+  const head = refs.get('HEAD')
+  if (head === undefined) {
+    console.log(`outdated: version check skipped (no HEAD advertised by ${repo})`)
+    return
+  }
+  if (typeof ref === 'string' && ref === head) console.log('up to date with the upstream default branch')
+  else console.log(`upstream has moved (upstream HEAD ${shortRef(head)}) — run dsh-seam sync to update`)
+  const tags = []
+  for (const name of refs.keys()) {
+    if (!name.startsWith('refs/tags/')) continue
+    const tag = name.slice('refs/tags/'.length).replace(/\^\{\}$/, '')
+    if (/^v?\d+\.\d+\.\d+/.test(tag) && !tags.includes(tag)) tags.push(tag)
+  }
+  if (tags.length > 0) {
+    const latest = tags.reduce((best, tag) => (compareSemver(tag, best) > 0 ? tag : best))
+    const latestSha = refs.get(`refs/tags/${latest}^{}`) ?? refs.get(`refs/tags/${latest}`) ?? ''
+    // ls-remote 只见指针不见历史：只有 pinned 与 HEAD/tag 指针重合时才能断言顺序。
+    const relation = typeof ref !== 'string' || latestSha !== ref
+      ? (ref === head ? '; pinned ref is ahead of the latest tag' : '; pinned ref is not the latest tag')
+      : '; pinned ref is the latest tag'
+    console.log(`latest tag: ${latest}${relation}`)
+  }
 }
 
 function failUsage(message) {
@@ -356,6 +497,24 @@ function parseSyncOrCheckOptions(args) {
     }
   }
   return { into: resolve(into), source: source !== undefined ? resolve(source) : undefined }
+}
+
+/** check/outdated 的参数边界：只接受 --into。check 是纯离线门禁（决策 7），
+ *  连接源仓的 --source 都不允许出现——防止悄悄重新引入对 dsh-seam 源仓的依赖。 */
+function parseIntoOptions(args, command) {
+  let into = process.cwd()
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]
+    if (arg === '--into') {
+      const value = args[index + 1]
+      if (value === undefined || value.startsWith('--')) failUsage(`missing value for ${arg}`)
+      into = value
+      index += 1
+    } else {
+      failUsage(`unknown option for ${command}: ${arg} (only --into is accepted here)`)
+    }
+  }
+  return resolve(into)
 }
 
 function runPayloadScript(scriptRel, args, envOverrides = {}, stdio = 'inherit') {
@@ -576,8 +735,9 @@ if (command === 'sync') {
   const { into, source } = parseSyncOrCheckOptions(rest)
   sync(into, source ?? DEFAULT_SOURCE)
 } else if (command === 'check') {
-  const { into, source } = parseSyncOrCheckOptions(rest)
-  check(into, source)
+  check(parseIntoOptions(rest, 'check'))
+} else if (command === 'outdated') {
+  outdated(parseIntoOptions(rest, 'outdated'))
 } else if (command === 'scan') {
   scanCommand(rest)
 } else if (command === 'verify') {
