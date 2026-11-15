@@ -13,7 +13,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist-test', { recursive: true, force: true })\" && tsc -p tsconfig.json && node --input-type=module -e \"import { cpSync } from 'node:fs'; cpSync('payload/scripts', 'dist-test/scripts', { recursive: true }); cpSync('package.json', 'dist-test/package.json')\" && node --test dist-test/tests/mechanism/*.test.js",
-    "check": "npm run typecheck && npm run test"
+    "check": "npm run typecheck && npm run test && node --check ci/probe-loop.mjs && node --check ci/probe-corpus.mjs && node --check ci/probe-history.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.1.0",

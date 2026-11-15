@@ -8,9 +8,11 @@
  *                                       「适配提交」（锁文件里 DSH 系列版本变化的
  *                                       first-parent 提交），跑三点矩阵并产出
  *                                       可入库的候选 JSON（离线填表工具）。
- *   --check [--list ci/plugins.json] [--workspace <dir>] [--only a,b]
+ *   --check [--list ci/plugins.json] [--workspace <dir>] [--only a,b] [--report <file>]
  *                                       跑 plugins.json 里 curated 的 history
- *                                       断言（CI 模式，全量 clone）。
+ *                                       断言（CI 模式，全量 clone + 按锁文件
+ *                                       --ignore-scripts 安装后回放；--report
+ *                                       额外写文件供 artifact 上传）。
  *
  * 三点矩阵（P = 适配前提交，C = 适配后提交，V1 = dshFrom，V2 = dshTo）：
  *   F(code, V) = 该代码对版本 V 验证时的失败表面集合（✖ 行按表面归一化）。
@@ -164,7 +166,9 @@ function discover() {
       const current = versionAt(commits[index])
       const parent = versionAt(commits[index + 1])
       if (current === null || parent === null || parent.size === 0) continue
-      if (current.size > 1) continue // 该点未 lockstep，跳过（记录原因见下）
+      // 两端都必须 lockstep 单版本：过渡态（并存多个 dsh 版本）的取值不确定，
+      // dshFrom/dshTo 会退化成 Set 的任意元素——跳过而非猜。
+      if (current.size > 1 || parent.size > 1) continue
       if (![...current].every(version => parent.has(version))) {
         pairs.push({ to: commits[index], from: commits[index + 1], dshTo: [...current][0], dshFrom: [...parent][0] })
       }

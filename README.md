@@ -58,7 +58,7 @@ usage: dsh-seam <command> [options]
 | 使用方式 | 命令与参数 | 功能说明 |
 | --- | --- | --- |
 | **直接运行** | `scan [--root <dir>] [--write \| --check \| --json] [--recursive]` | 扫描源码依赖面与潜在隐含依赖；默认打印 Markdown 报告，`--write` 写入 `coupling.json`，`--check` 校验契约是否漏更新及隐含依赖是否已登记，`--recursive` 对 workspace 内全部插件包逐个执行并汇总退出码 |
-| **直接运行** | `verify [--repo <dir>] [<coupling.json> ...] [--recursive] [--types-root <dir> \| --upstream <ver\|tag>]` | 生成类型检查代码并验证契约兼容性；若仓库内尚无 `coupling.json`，则在内存中直接扫描并验证；`--recursive` 逐个验证 workspace 插件包；`--types-root` 把上游 `.d.ts` 锚定到显式目录（离线），`--upstream <版本号\|tag>` 从 registry 按同版本（lockstep）拉取 DSH 系列包装配临时类型目录——用于升级前评估“升到目标版本会坏哪里”，tag 先解析为具体版本号，已退出 lockstep 的包（目标版本未发布）自动回落到其最新已发布版并明示，cordis 等独立包沿用本地安装 |
+| **直接运行** | `verify [--repo <dir>] [<coupling.json> ...] [--recursive] [--types-root <dir> \| --upstream <ver\|tag>]` | 生成类型检查代码并验证契约兼容性；若仓库内尚无 `coupling.json`，则在内存中直接扫描并验证；`--recursive` 逐个验证 workspace 插件包；`--types-root` 把上游 `.d.ts` 锚定到显式目录（离线），`--upstream <版本号\|tag>` 从 registry 按同版本（lockstep）拉取 DSH 系列包装配临时类型目录——用于升级前评估“升到目标版本会坏哪里”，tag 先解析为具体版本号，已退出 lockstep 的包（目标版本未发布）自动回落到不超前于目标的最新已发布版并明示，cordis 等独立包沿用本地安装 |
 | **直接运行** | `bump [--root <dir>] [--check \| --print-only] [--keep-floor]` | 检查（`--check`）或统一升级 `@deepseek-ai/dsh-*` 依赖组与 `engines.dsh` 版本范围 |
 | **直接运行** | `compat [--root <dir>] [--manifest <package.json>]` | 调用 `@deepseek-ai/dsh-app-boot` 官方接口校验 `engines.dsh` 版本兼容范围配置是否正确 |
 | **直接运行** | `baseline [--root <dir>]` | 提取 `node_modules` 中已安装 `@deepseek-ai/*` 的版本与 `integrity` 哈希写入 `baseline.json` |

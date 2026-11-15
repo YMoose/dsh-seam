@@ -29,7 +29,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const MANIFEST = '.dsh-seam.json'
 const DEFAULT_SOURCE = dirname(fileURLToPath(import.meta.url))
@@ -363,13 +363,16 @@ function compareSemver(a, b) {
 
 /** --upstream 的逐包版本决策（design.md 2.5）：目标版本存在则 lockstep 使用；
  *  包已退出 lockstep（目标版本未发布——真实语料：@deepseek-ai/dsh-client-runtime
- *  停更于 0.1.1-rc.2，而其余包升 0.2.x）时回落到该包已发布的最高版本，由调用方
- *  打印明示；一个版本都没发过的包返回 null（调用方按整体失败处理）。 */
+ *  停更于 0.1.1-rc.2，而其余包升 0.2.x）时回落到 **不超前于目标的** 最高已发布
+ *  版本并由调用方打印明示（超前回落会把未来版本的破坏混进本次评估）；该包
+ *  连一个 ≤ 目标的版本都没有（比目标还新）或一个版本都没发过时返回 null，
+ *  由调用方按整体失败处理。 */
 export function pickUpstreamVersion(target, versions) {
   const published = [...versions]
   if (published.includes(target)) return { version: target, fellBack: false }
   let best = null
   for (const version of published) {
+    if (compareSemver(version, target) > 0) continue
     if (best === null || compareSemver(version, best) > 0) best = version
   }
   return best === null ? null : { version: best, fellBack: true }
@@ -685,8 +688,9 @@ function buildUpstreamTypesRoot(repoRoots, spec) {
   for (const name of listed) {
     if (failure !== null) break
     // 逐包版本决策：npm view versions 一次拿全（缓存共享），目标版本缺版时
-    // 回落到该包最高已发布版本并明示（决策 18 语义：lockstep 只约束还参与
-    // lockstep 的包；退出者保持其最新可用版，即插件作者环境里它的真实形态）。
+    // 回落到不超前于目标的最高已发布版本并明示（决策 18 语义：lockstep 只约束
+    // 还参与 lockstep 的包；退出者保持 ≤ 目标的最新形态，即插件作者环境里
+    // 它的真实形态，超前回落会把未来版本的破坏混进本次评估）。
     if (!versionsCache.has(name)) {
       const view = spawnSync('npm', ['view', name, 'versions', '--json'], { encoding: 'utf8', timeout: 60_000 })
       if (view.status !== 0) {
@@ -697,7 +701,7 @@ function buildUpstreamTypesRoot(repoRoots, spec) {
     }
     const picked = pickUpstreamVersion(version, versionsCache.get(name))
     if (picked === null) {
-      failure = `${name} has no published versions at all — cannot assemble an upstream types-root`
+      failure = `${name} has no published version <= ${version} — cannot assemble an upstream types-root for it (package newer than the target, or nothing published)`
       break
     }
     if (picked.fellBack) {
@@ -917,7 +921,7 @@ function baselineCommand(args) {
 
 // ESM main guard：cli.mjs 作为模块被测试 import 时不执行命令分发（spawn 运行不受影响）。
 const isMain = process.argv[1] !== undefined
-  && import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]).href
+  && import.meta.url === pathToFileURL(process.argv[1]).href
 if (isMain) {
   const [command, ...rest] = process.argv.slice(2)
   if (command === 'sync') {
