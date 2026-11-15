@@ -155,7 +155,7 @@ Phase 1            Phase 2              Phase 3              Phase 4
   - **正式版本 Tag 与可移植清单（原则 3，已落地）**：已发布首个正式 tag（`v0.1.0`）；`.dsh-seam.json` 只记录 `source.repo`（归一化 https 仓库地址）+ `source.ref`（来源 commit）+ 文件哈希，不含本机绝对路径；`gitHead()` 在无法获取 commit 或仓库地址时显式报错拒绝 sync（绝不写入 `unknown` 占位）。
   - **本地校验与新版本提醒拆分（决策 7，已落地）**：`check` 为纯离线门禁，只比对受管文件哈希，不定位 dsh-seam 源仓、不联网；`outdated` 联网（`git ls-remote`）提示上游 HEAD 与 semver 最新 tag（决策 16：tag 先解析成版本号再比较），永不阻断退出；上一次 sync 落后来源仓多少由 `sync` 提示。
   - **契约版本元数据（决策 8，已落地）**：`coupling.json` 头部携带 `schemaVersion`、`generator: { dshSeam, typescript }` 与 `generatedAt`；引擎遇到未知 schema 版本时拒绝执行；`--write` 幂等（契约未变不重写）。
-  - **环境要求声明**：在文档与 `package.json` 中明确支持的 TypeScript 版本范围、Node.js 版本（≥ 24.9）及 Level 2 对插件仓目录结构的要求。
+  - **环境要求声明（已落地）**：README §3 明确 Node.js ≥ 24.9（`package.json` `engines` 同步声明）、TypeScript 已验证版本（6.0.3）与 Level 2 对插件仓目录结构（`src`/`tests`/`scripts` 约定与测试管线）的要求。
 - **2.1 同步文件分档（`--profile core | full`）**：`core` 仅同步引擎、规格合并工具、`scan`/`verify` 及其机制测试；`full` 额外包含 `bump`/`baseline`/`compat`。无 profile 字段的已有清单默认按 `full` 处理。
 - **2.2 隐含依赖不绑定源码行号（决策 9）**：支持用 **确认 ID + 所在函数名 + AST 表达式特征** 匹配已登记的隐含依赖，避免增删代码导致行号偏移；所有已登记条目仍在终端具名列出。
 - **2.3 TypeChecker 辅助类型解析**：在保留纯 AST 快速扫描的基础上，对未显式标注类型的局部变量提供基于 `ts.Program` / `TypeChecker` 的可选类型推导并写入 `coupling.json`，减少手写 `overrides`。

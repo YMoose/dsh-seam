@@ -91,6 +91,8 @@ usage: dsh-seam <command> [options]
 
 > **版本固定约定**：以下示例统一使用 `#v0.1.0`。在首个正式 tag 发布前，请替换为具体提交哈希 `#<commit-sha>` 或本地克隆路径 `node /path/to/dsh-seam/cli.mjs`。CI 中请固定 `#<ref>`，不要跟随浮动分支。
 
+> **环境要求**：Node.js **≥ 24.9**（`package.json` 的 `engines` 已声明）；TypeScript **已在 6.0.3 上验证**（引擎转译只使用稳定的 Compiler API，更旧的 5.x 预期可用但未逐一验证）。Level 2 接入对插件仓目录结构的要求：`package.json` 声明 `@deepseek-ai/*` 依赖、源码位于 `src/`、测试位于 `tests/`（`scan`/`verify` 按 `src`/`tests`/`scripts` 三个根目录扫描），且插件仓自身具备可运行的 TypeScript 编译与 `node --test` 测试管线来执行同步过去的机制测试。
+
 ### 3.1 三级接入对比与前置条件
 
 | 接入级别 | 写入插件仓的文件 | 前置条件（逐级累加） | 覆盖能力与检查效果 |
