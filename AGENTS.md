@@ -71,6 +71,11 @@ dsh-seam/
   - 文件存在（Level 2）：存在未登记的隐含依赖时必须返回 `exit 1`；**若该文件存在但语法损坏或导出结构不可读，必须立即报错返回 `exit 1`**，严禁回退为空列表放行。
 - **清理临时检查文件**：`engine.ts` 与 `verify-coupling.mjs` 编译时写入的任何临时文件必须在 `try ... finally` 中删除，不得残留污染工作区。
 
+### 2.5 工具输出与写入范围红线（建议安全）
+
+1. **`bump` 写入范围仅限两处**：`package.json` 中的 `@deepseek-ai/dsh-*` 依赖版本号与 `engines.dsh`。严禁改动 `scripts`、非 `dsh-*` 依赖、自定义字段或顶层键顺序。机制测试必须锁定该写入范围：fixture 携带 `scripts`、其他依赖与自定义字段，断言写入前后除两处允许变更点外逐项相等且键序不变（见 `payload/tests/mechanism/bump-upstream.test.ts` 的 write-scope 用例）。
+2. **严禁输出“建议修改环境变量/宿主配置”类指引**：工具给出的操作建议若让用户改坏配置，杀伤力大于漏报。先例：相邻工具 dsh-plugin-health 的 doctor 告警建议设置 `NODE_USE_ENV_PROXY`，导致桌面应用在启动前崩溃（[EasonMWS/dsh-plugin-health#7](https://github.com/EasonMWS/dsh-plugin-health/issues/7)），该告警已整体移除。命令输出只允许描述工具自身改写后的后续操作（如重新 `npm install`），不允许建议用户修改其环境变量或宿主配置。
+
 ---
 
 ## 3. 开发、验证与同步工作流
