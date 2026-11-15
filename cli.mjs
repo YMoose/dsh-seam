@@ -11,7 +11,7 @@
  *
  *   轨道 B（直接运行：Level 0 零配置体检 / Level 1 显式门禁 / 多契约批量校验）：
  *     scan     [--root <repoDir>] [--write | --check | --json] [--recursive]
- *     verify   [--repo <repoDir>] [<coupling.json> ...] [--recursive]
+ *     verify   [--repo <repoDir>] [<coupling.json> ...] [--recursive] [--types-root <dir> | --upstream <ver|tag>]
  *     bump     [--root <repoDir>] [--check | --print-only] [--keep-floor]
  *     compat   [--root <repoDir>] [--manifest <package.json>]
  *     baseline [--root <repoDir>]
@@ -38,7 +38,7 @@ const USAGE = `usage: dsh-seam <command> [options]
   check    [--into <consumerDir>]                                offline gate: managed files match the manifest hashes
   outdated [--into <consumerDir>]                                advisory upstream version notice (never blocks)
   scan     [--root <repoDir>] [--write | --check | --json] [--recursive]  scan source coupling and implicit-contract suspects
-  verify   [--repo <repoDir>] [<coupling.json> ...] [--recursive]         verify coupling contracts (scans in-memory if no coupling.json)
+  verify   [--repo <repoDir>] [<coupling.json> ...] [--recursive] [--types-root <dir> | --upstream <ver|tag>]  verify coupling contracts (scans in-memory if no coupling.json; --types-root pins the upstream .d.ts set, --upstream fetches one from the registry)
   bump     [--root <repoDir>] [--check | --print-only] [--keep-floor]  check or advance the @deepseek-ai/dsh-* dependency group
   compat   [--root <repoDir>] [--manifest <package.json>]        run the official @deepseek-ai/dsh-app-boot compatibility gate
   baseline [--root <repoDir>]                                    write baseline.json integrity fingerprint from node_modules`
@@ -595,9 +595,104 @@ function scanCommand(args) {
   process.exit(status)
 }
 
+/** coupling（对象）里引用过的 DSH 系列包集合：@deepseek-ai/dsh 与 dsh-*。
+ *  coupling 的键可能带深导入子路径（如 `@deepseek-ai/dsh-session-projection/types`，
+ *  真实语料 dsh-context 逮住的形状），先归一化到根包名再过滤。
+ *  cordis 等独立版本包不参与 lockstep 换版本（design.md 2.5：沿用本地安装）。 */
+function rootPackageName(specifier) {
+  const parts = specifier.split('/')
+  return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]
+}
+
+function dshSeriesPackagesOf(coupling) {
+  const names = new Set([
+    ...Object.keys(coupling?.packages ?? {}),
+    ...Object.keys(coupling?.fieldPaths ?? {}),
+    ...Object.keys(coupling?.discriminants ?? {}),
+  ].map(rootPackageName))
+  return [...names]
+    .filter(name => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
+    .sort()
+}
+
+/** 装配 --upstream 临时 types-root（design.md 2.5）：对 coupling 引用的全部
+ *  DSH 系列包以同一版本 lockstep 拉取（npm pack 走 npm 自身配置——尊重
+ *  registry 镜像、代理与登录态；tar 解包到 <dir>/@deepseek-ai/<pkg>），进程
+ *  退出时清理。tag 输入先解析成具体版本号再使用（决策 16：tag 只用于跟随，
+ *  判断一律具体版本）。任何一步失败都大声退出并保留原因。 */
+function buildUpstreamTypesRoot(repoRoots, spec) {
+  const names = new Set()
+  for (const root of repoRoots) {
+    const committed = join(root, 'coupling.json')
+    let coupling = null
+    if (existsSync(committed)) {
+      try {
+        coupling = JSON.parse(readFileSync(committed, 'utf8'))
+      } catch (error) {
+        failUsage(`cannot parse ${committed}: ${error.message}`)
+      }
+    } else {
+      // Level 0 仓没有已提交契约：内存扫描取包集合（离线，不写盘）。
+      const scanned = runPayloadScript('scripts/analyze-dsh-coupling.mjs', ['--json'], { DSH_SEAM_ROOT: root }, 'pipe')
+      if (scanned.status !== 0) {
+        if (scanned.stderr) process.stderr.write(scanned.stderr)
+        failUsage(`cannot scan ${root} to collect the --upstream package set`)
+      }
+      coupling = JSON.parse(scanned.stdout)
+    }
+    for (const name of dshSeriesPackagesOf(coupling)) names.add(name)
+  }
+  if (names.size === 0) {
+    failUsage('--upstream found no @deepseek-ai/dsh-* packages in the coupling — nothing to pin (use --types-root to point at a prepared directory instead)')
+  }
+  const listed = [...names].sort()
+  let version = spec
+  if (!/^\d+\.\d+\.\d+(?:[-+].+)?$/.test(spec)) {
+    const view = spawnSync('npm', ['view', listed[0], 'dist-tags', '--json'], { encoding: 'utf8', timeout: 60_000 })
+    if (view.status !== 0) failUsage(`cannot resolve tag '${spec}' (npm view ${listed[0]} dist-tags):\n${view.stderr}`)
+    let tags = {}
+    try { tags = JSON.parse(view.stdout) } catch { /* fall through to the not-found message */ }
+    const resolved = tags?.[spec]
+    if (typeof resolved !== 'string') {
+      failUsage(`tag '${spec}' not found on ${listed[0]}; available dist-tags: ${Object.keys(tags).join(', ') || '(none)'}`)
+    }
+    version = resolved
+    console.log(`==> upstream: tag '${spec}' -> ${version} (resolved via ${listed[0]} dist-tags)`)
+  }
+  const typesRoot = mkdtempSync(join(tmpdir(), 'dsh-upstream-'))
+  let failure = null
+  for (const name of listed) {
+    if (failure !== null) break
+    const target = join(typesRoot, '@deepseek-ai', name.slice('@deepseek-ai/'.length))
+    mkdirSync(target, { recursive: true })
+    const packed = spawnSync('npm', ['pack', `${name}@${version}`, '--pack-destination', typesRoot], { encoding: 'utf8', timeout: 180_000 })
+    const tarball = String(packed.stdout.trim().split('\n').pop())
+    if (packed.status !== 0 || !tarball.endsWith('.tgz') || !existsSync(join(typesRoot, tarball))) {
+      failure = `cannot fetch ${name}@${version} via npm pack:\n${packed.stderr ?? ''}`
+        + `— DSH-series packages are pulled in lockstep at one version; confirm every package in the coupling published ${version}`
+      break
+    }
+    const extracted = spawnSync('tar', ['-xzf', join(typesRoot, tarball), '--strip-components=1', '-C', target], { encoding: 'utf8', timeout: 60_000 })
+    rmSync(join(typesRoot, tarball), { force: true })
+    if (extracted.status !== 0) {
+      failure = `cannot extract ${name}@${version}: ${extracted.stderr}`
+      break
+    }
+  }
+  if (failure !== null) {
+    rmSync(typesRoot, { recursive: true, force: true })
+    failUsage(failure)
+  }
+  console.log(`==> upstream types-root: ${listed.map(name => `${name}@${version}`).join(', ')}`)
+  process.on('exit', () => rmSync(typesRoot, { recursive: true, force: true }))
+  return typesRoot
+}
+
 function verifyCommand(args) {
   let repo = process.env.DSH_SEAM_ROOT ?? process.env.DSH_LOG_ENHANCE_ROOT ?? process.cwd()
   let recursive = false
+  let typesRoot
+  let upstreamSpec
   const files = []
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
@@ -608,6 +703,17 @@ function verifyCommand(args) {
       index += 1
     } else if (arg === '--recursive') {
       recursive = true
+    } else if (arg === '--types-root') {
+      const value = args[index + 1]
+      if (value === undefined || value.startsWith('--')) failUsage(`missing value for ${arg}`)
+      typesRoot = resolve(process.cwd(), value)
+      if (!existsSync(typesRoot)) failUsage(`--types-root directory not found: ${typesRoot}`)
+      index += 1
+    } else if (arg === '--upstream') {
+      const value = args[index + 1]
+      if (value === undefined || value.startsWith('--')) failUsage(`missing value for ${arg}`)
+      upstreamSpec = value
+      index += 1
     } else if (arg.startsWith('--')) {
       failUsage(`unknown option for verify: ${arg}`)
     } else {
@@ -617,9 +723,21 @@ function verifyCommand(args) {
   if (recursive && files.length > 0) {
     failUsage('--recursive cannot be combined with explicit coupling.json arguments (point --repo at the workspace root instead)')
   }
+  if (typesRoot !== undefined && upstreamSpec !== undefined) {
+    failUsage('--types-root and --upstream are mutually exclusive (--upstream assembles its own temporary types-root)')
+  }
   const repoRoot = resolve(repo)
+  let typesRootDir = typesRoot
+  if (upstreamSpec !== undefined) {
+    const targets = recursive
+      ? discoverPluginPackages(repoRoot).candidates.filter(entry => entry.isPlugin).map(entry => entry.dir)
+      : [repoRoot]
+    if (targets.length === 0) failUsage('--upstream found no plugin packages under --repo (--recursive discovery came back empty)')
+    typesRootDir = buildUpstreamTypesRoot(targets, upstreamSpec)
+  }
+  const typesRootArgs = typesRootDir === undefined ? [] : ['--types-root', typesRootDir]
   if (files.length > 0) {
-    const result = runPayloadScript('scripts/verify-coupling.mjs', files, { DSH_SEAM_ROOT: repoRoot })
+    const result = runPayloadScript('scripts/verify-coupling.mjs', [...typesRootArgs, ...files], { DSH_SEAM_ROOT: repoRoot })
     process.exit(result.status ?? 1)
   }
 
@@ -627,7 +745,7 @@ function verifyCommand(args) {
   const verifyRepoOnce = (targetRoot, label) => {
     const committedCoupling = join(targetRoot, 'coupling.json')
     if (existsSync(committedCoupling)) {
-      const result = runPayloadScript('scripts/verify-coupling.mjs', [committedCoupling], {
+      const result = runPayloadScript('scripts/verify-coupling.mjs', [...typesRootArgs, committedCoupling], {
         DSH_SEAM_ROOT: targetRoot,
         ...(label !== undefined ? { DSH_SEAM_LABEL: label } : {}),
       })
@@ -650,7 +768,7 @@ function verifyCommand(args) {
     const tempCoupling = join(tempDir, 'coupling.json')
     writeFileSync(tempCoupling, scanned.stdout)
     try {
-      const result = runPayloadScript('scripts/verify-coupling.mjs', [tempCoupling], {
+      const result = runPayloadScript('scripts/verify-coupling.mjs', [...typesRootArgs, tempCoupling], {
         DSH_SEAM_ROOT: targetRoot,
         DSH_SEAM_LABEL: `${label ?? targetRoot} (ephemeral)`,
       })
