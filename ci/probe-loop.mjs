@@ -141,10 +141,12 @@ export function probeRepo(repo, cli) {
   const dirtyBefore = gitDirty(repo)
   let step = 'baseline'
   try {
-    // 2. 补戳元数据（recursive：每个发现的插件包各写一份 coupling.json）
+    // 2. 补戳元数据（recursive：每个发现的插件包各写一份 coupling.json）。
+    //    已提交契约的仓（Level 1/2 接入者，如 dsh-log-enhance）若契约仍最新，
+    //    首跑就会输出 unchanged——同样合法，元数据断言对既有文件照常生效。
     step = 'scan --write'
     const write1 = run(cli, scanArgs(['--write']))
-    if (write1.status !== 0 || !/written/.test(write1.out)) throw new Error(`exit=${write1.status} ${write1.out.slice(0, 200)}`)
+    if (write1.status !== 0 || !/written|unchanged/.test(write1.out)) throw new Error(`exit=${write1.status} ${write1.out.slice(0, 200)}`)
     const stampedFiles = couplingFiles(repo)
     if (stampedFiles.length === 0) throw new Error('scan --write produced no coupling.json')
     for (const file of stampedFiles) {
