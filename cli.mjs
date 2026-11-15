@@ -361,6 +361,20 @@ function compareSemver(a, b) {
   return 0
 }
 
+/** --upstream 的逐包版本决策（design.md 2.5）：目标版本存在则 lockstep 使用；
+ *  包已退出 lockstep（目标版本未发布——真实语料：@deepseek-ai/dsh-client-runtime
+ *  停更于 0.1.1-rc.2，而其余包升 0.2.x）时回落到该包已发布的最高版本，由调用方
+ *  打印明示；一个版本都没发过的包返回 null（调用方按整体失败处理）。 */
+export function pickUpstreamVersion(target, versions) {
+  const published = [...versions]
+  if (published.includes(target)) return { version: target, fellBack: false }
+  let best = null
+  for (const version of published) {
+    if (best === null || compareSemver(version, best) > 0) best = version
+  }
+  return best === null ? null : { version: best, fellBack: true }
+}
+
 function sync(into, source) {
   const entries = whitelist(source)
   if (entries.length === 0) { console.error(`no payload files under ${join(source, 'payload')}`); process.exit(1) }
@@ -666,29 +680,52 @@ function buildUpstreamTypesRoot(repoRoots, spec) {
   }
   const typesRoot = mkdtempSync(join(tmpdir(), 'dsh-upstream-'))
   let failure = null
+  const versionsCache = new Map()
+  const resolved = []
   for (const name of listed) {
     if (failure !== null) break
+    // 逐包版本决策：npm view versions 一次拿全（缓存共享），目标版本缺版时
+    // 回落到该包最高已发布版本并明示（决策 18 语义：lockstep 只约束还参与
+    // lockstep 的包；退出者保持其最新可用版，即插件作者环境里它的真实形态）。
+    if (!versionsCache.has(name)) {
+      const view = spawnSync('npm', ['view', name, 'versions', '--json'], { encoding: 'utf8', timeout: 60_000 })
+      if (view.status !== 0) {
+        failure = `cannot list versions of ${name} (npm view ${name} versions):\n${view.stderr}`
+        break
+      }
+      try { versionsCache.set(name, JSON.parse(view.stdout)) } catch { versionsCache.set(name, []) }
+    }
+    const picked = pickUpstreamVersion(version, versionsCache.get(name))
+    if (picked === null) {
+      failure = `${name} has no published versions at all — cannot assemble an upstream types-root`
+      break
+    }
+    if (picked.fellBack) {
+      console.log(`==> upstream: ${name} has no ${version}; falling back to its latest published ${picked.version} (package left the lockstep cohort)`)
+    }
+    const packVersion = picked.version
     const target = join(typesRoot, '@deepseek-ai', name.slice('@deepseek-ai/'.length))
     mkdirSync(target, { recursive: true })
-    const packed = spawnSync('npm', ['pack', `${name}@${version}`, '--pack-destination', typesRoot], { encoding: 'utf8', timeout: 180_000 })
+    const packed = spawnSync('npm', ['pack', `${name}@${packVersion}`, '--pack-destination', typesRoot], { encoding: 'utf8', timeout: 180_000 })
     const tarball = String(packed.stdout.trim().split('\n').pop())
     if (packed.status !== 0 || !tarball.endsWith('.tgz') || !existsSync(join(typesRoot, tarball))) {
-      failure = `cannot fetch ${name}@${version} via npm pack:\n${packed.stderr ?? ''}`
-        + `— DSH-series packages are pulled in lockstep at one version; confirm every package in the coupling published ${version}`
+      failure = `cannot fetch ${name}@${packVersion} via npm pack:\n${packed.stderr ?? ''}`
+        + `— DSH-series packages are pulled in lockstep at one version; confirm every package in the coupling published ${packVersion}`
       break
     }
     const extracted = spawnSync('tar', ['-xzf', join(typesRoot, tarball), '--strip-components=1', '-C', target], { encoding: 'utf8', timeout: 60_000 })
     rmSync(join(typesRoot, tarball), { force: true })
     if (extracted.status !== 0) {
-      failure = `cannot extract ${name}@${version}: ${extracted.stderr}`
+      failure = `cannot extract ${name}@${packVersion}: ${extracted.stderr}`
       break
     }
+    resolved.push(`${name}@${packVersion}`)
   }
   if (failure !== null) {
     rmSync(typesRoot, { recursive: true, force: true })
     failUsage(failure)
   }
-  console.log(`==> upstream types-root: ${listed.map(name => `${name}@${version}`).join(', ')}`)
+  console.log(`==> upstream types-root: ${resolved.join(', ')}`)
   process.on('exit', () => rmSync(typesRoot, { recursive: true, force: true }))
   return typesRoot
 }
@@ -878,25 +915,30 @@ function baselineCommand(args) {
   process.exit(result.status ?? 1)
 }
 
-const [command, ...rest] = process.argv.slice(2)
-if (command === 'sync') {
-  const { into, source } = parseSyncOrCheckOptions(rest)
-  sync(into, source ?? DEFAULT_SOURCE)
-} else if (command === 'check') {
-  check(parseIntoOptions(rest, 'check'))
-} else if (command === 'outdated') {
-  outdated(parseIntoOptions(rest, 'outdated'))
-} else if (command === 'scan') {
-  scanCommand(rest)
-} else if (command === 'verify') {
-  verifyCommand(rest)
-} else if (command === 'bump') {
-  bumpCommand(rest)
-} else if (command === 'compat') {
-  compatCommand(rest)
-} else if (command === 'baseline') {
-  baselineCommand(rest)
-} else {
-  console.log(USAGE)
-  process.exit(command === '--help' || command === '-h' || command === undefined ? 0 : 1)
+// ESM main guard：cli.mjs 作为模块被测试 import 时不执行命令分发（spawn 运行不受影响）。
+const isMain = process.argv[1] !== undefined
+  && import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]).href
+if (isMain) {
+  const [command, ...rest] = process.argv.slice(2)
+  if (command === 'sync') {
+    const { into, source } = parseSyncOrCheckOptions(rest)
+    sync(into, source ?? DEFAULT_SOURCE)
+  } else if (command === 'check') {
+    check(parseIntoOptions(rest, 'check'))
+  } else if (command === 'outdated') {
+    outdated(parseIntoOptions(rest, 'outdated'))
+  } else if (command === 'scan') {
+    scanCommand(rest)
+  } else if (command === 'verify') {
+    verifyCommand(rest)
+  } else if (command === 'bump') {
+    bumpCommand(rest)
+  } else if (command === 'compat') {
+    compatCommand(rest)
+  } else if (command === 'baseline') {
+    baselineCommand(rest)
+  } else {
+    console.log(USAGE)
+    process.exit(command === '--help' || command === '-h' || command === undefined ? 0 : 1)
+  }
 }
