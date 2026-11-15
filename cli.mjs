@@ -637,11 +637,45 @@ function dshSeriesPackagesOf(coupling) {
     .sort()
 }
 
+/** 读取插件仓 `package.json` 的 `dsh.client.inject` 模块声明（design.md 2.8）：
+ *  纯 JS / manifest 注入形态唯一可见的耦合来源（源码无 import，类型契约不
+ *  覆盖）。返回排序去重后的模块名；无声明、无 package.json 或文件损坏时
+ *  返回空数组（调用方以此区分「无此形态」与「读取失败」无需报错）。 */
+export function manifestInjectModulesOf(root) {
+  try {
+    const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+    const inject = manifest?.dsh?.client?.inject
+    if (!Array.isArray(inject)) return []
+    return [...new Set(inject.filter(name => typeof name === 'string' && name !== ''))].sort()
+  } catch {
+    return []
+  }
+}
+
+/** 对 `client.inject` 模块做 registry 存在性检查（design.md 2.8）：这些模块
+ *  由宿主运行时注入、无探针消费、无版本语义，因此只 `npm view` 确认仍在
+ *  registry 上（上游改名/下架显式报错），不参与 lockstep pack。runView 由
+ *  调用方注入（真实场景 spawn `npm view <name> version --json`；测试注入
+ *  假 runner 离线验证判定与报错内容）。返回 null = 全部存在。 */
+export function verifyInjectModulesOnRegistry(modules, runView) {
+  for (const [name, repos] of modules) {
+    const view = runView(name)
+    if (view.status !== 0 || String(view.stdout ?? '').trim() === '' || String(view.stdout ?? '').trim() === 'undefined') {
+      return `manifest dsh.client.inject module '${name}' (declared in ${repos.join(', ')}) is not found on the npm registry — `
+        + `upstream may have renamed or unpublished it; update dsh.client.inject in that package.json\n${view.stderr ?? ''}`
+    }
+  }
+  return null
+}
+
 /** 装配 --upstream 临时 types-root（design.md 2.5）：对 coupling 引用的全部
  *  DSH 系列包以同一版本 lockstep 拉取（npm pack 走 npm 自身配置——尊重
  *  registry 镜像、代理与登录态；tar 解包到 <dir>/@deepseek-ai/<pkg>），进程
  *  退出时清理。tag 输入先解析成具体版本号再使用（决策 16：tag 只用于跟随，
- *  判断一律具体版本）。任何一步失败都大声退出并保留原因。 */
+ *  判断一律具体版本）。任何一步失败都大声退出并保留原因。
+ *  纯 manifest 形态（仅 client.inject 声明、零 lockstep 包）：存在性检查
+ *  通过后返回 null——调用方以无 types-root 方式继续，verify 走自己的
+ *  skip/零锚定判定路径（design.md 2.7/2.8）。 */
 function buildUpstreamTypesRoot(repoRoots, spec) {
   const names = new Set()
   for (const root of repoRoots) {
@@ -664,9 +698,29 @@ function buildUpstreamTypesRoot(repoRoots, spec) {
     }
     for (const name of dshSeriesPackagesOf(coupling)) names.add(name)
   }
-  if (names.size === 0) {
+  // manifest 注入模块（design.md 2.8）：纯 JS / manifest 注入形态的唯一可见
+  // 耦合声明。不进 lockstep 装配（无探针消费、无版本语义），只做 registry
+  // 存在性检查——上游改名/下架在装配阶段显式报错，而不是等用户面板空白。
+  const injectModules = new Map()
+  for (const root of repoRoots) {
+    for (const name of manifestInjectModulesOf(root)) {
+      const repos = injectModules.get(name) ?? []
+      repos.push(root)
+      injectModules.set(name, repos)
+    }
+  }
+  if (names.size === 0 && injectModules.size === 0) {
     failUsage('--upstream found no @deepseek-ai/dsh-* packages in the coupling — nothing to pin (use --types-root to point at a prepared directory instead)')
   }
+  if (injectModules.size > 0) {
+    const injectFailure = verifyInjectModulesOnRegistry(
+      injectModules,
+      name => spawnSync('npm', ['view', name, 'version', '--json'], { encoding: 'utf8', timeout: 60_000 }),
+    )
+    if (injectFailure !== null) failUsage(injectFailure)
+    console.log(`==> upstream: manifest-injected module(s) verified present on the registry: ${[...injectModules.keys()].sort().join(', ')}`)
+  }
+  if (names.size === 0) return null
   const listed = [...names].sort()
   let version = spec
   if (!/^\d+\.\d+\.\d+(?:[-+].+)?$/.test(spec)) {
@@ -779,7 +833,9 @@ function verifyCommand(args) {
       ? discoverPluginPackages(repoRoot).candidates.filter(entry => entry.isPlugin).map(entry => entry.dir)
       : [repoRoot]
     if (targets.length === 0) failUsage('--upstream found no plugin packages under --repo (--recursive discovery came back empty)')
-    typesRootDir = buildUpstreamTypesRoot(targets, upstreamSpec)
+    // null = 纯 manifest 形态：存在性检查已过、无 lockstep 面可装配，不带
+    // types-root 继续（verify 走 skip/零锚定判定）。
+    typesRootDir = buildUpstreamTypesRoot(targets, upstreamSpec) ?? undefined
   }
   const typesRootArgs = typesRootDir === undefined ? [] : ['--types-root', typesRootDir]
   if (files.length > 0) {

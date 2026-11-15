@@ -110,3 +110,13 @@ npm run check       # 依次执行 typecheck 与 test（提交前必跑）
    - Level 2 消费仓（`../obsystem/dsh-log-enhance`）：同步后在其目录运行 `npm test` 与 `node /path/to/dsh-seam/cli.mjs check`。
    - Level 1 / Workspace 消费仓（如 `dsh-editor-socket`）：运行 `scan --check` 与 `verify`（或 `--recursive`）确认检查全部通过。
    - 第三方插件仓实测：安装依赖一律加 `--ignore-scripts`（`npm install --ignore-scripts`）。
+
+### 3.4 已声明边界的变更须用户明确确认（红线）
+
+[docs/design.md](docs/design.md) §5「已知工程边界」是工具能力范围与职责划分的**已声明契约**，并同步体现在 README §5 与 scan 报告的边界标注中。任何会**破坏或改变**已声明边界的改动——包括收窄检查范围（原本能查的面变为不查）、扩大能力声明（原本声明不覆盖的面新增覆盖）、改变某个边的负责方（归 dsh-seam、归运行时工具、还是归人工审查）——**必须先向用户显式指出并获得明确反馈后才能动手**，严禁静默改变边界。向用户指出时必须说清三件事：
+
+1. **触碰哪条边界**：design.md §5 的具体条目；
+2. **从什么状态变到什么状态**：例如某形态从「scan 可见」变「不可见」、或从「不检查」变「存在性检查」；
+3. **影响哪些真实形态**：哪些接入级别/源码形态（如纯 JS + manifest 注入形态）的仓会受影响。
+
+边界变更落地时必须同步更新 design.md §5 与相应决策记录（§4 关键决策 / §6 Roadmap），并在提交说明中注明边界变更；先改代码后补文档、或在实现中夹带未向用户声明过的边界移动，均属红线违规。
