@@ -1,0 +1,30 @@
+name: real-plugin-probe
+
+# 真实第三方插件语料回归（ci/plugins.json → clone → --ignore-scripts 安装 → 六步探测）。
+# 失败语义见 ci/probe-corpus.mjs：只有 dsh-seam 自身断言挂掉（补戳/幂等/门禁/基线一致/复原）
+# 或语料列表失效才判红；第三方仓自身的安装失败与探针红脸均为观测记录。
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '25'
+      - name: install alternate package managers
+        run: npm install -g pnpm@latest yarn@latest
+      - name: probe corpus
+        run: node ci/probe-corpus.mjs --report corpus-report.txt
+      - name: upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-report
+          path: corpus-report.txt

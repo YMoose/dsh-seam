@@ -26,6 +26,10 @@ dsh-seam/
 │       │   └── standard-specs.ts            # 插件仓自定义规则合并工具
 │       ├── mechanism/*.test.ts              # 自包含机制回归测试（同步至插件仓 tests/*.test.ts）
 │       └── contracts/implicit-seams.ts      # 仅作本仓 tsc 类型检查夹具，严禁加入 MANAGED_FILES
+├── ci/                                       # 真实插件语料回归（real-plugin-probe workflow，手动触发）
+│   ├── plugins.json                         # 语料列表（第三方插件仓 git URL；clone 失败=列表失效，CI 判红）
+│   ├── probe-loop.mjs                       # 单仓六步探测循环（本地 dsh-plugins/probe-dsh-seam.mjs 复用同一实现）
+│   └── probe-corpus.mjs                     # 语料 runner：clone → 按锁文件 --ignore-scripts 安装 → 逐仓探测
 └── docs/
     └── design.md                            # 设计思想、架构决策记录与演进路线
 ```
