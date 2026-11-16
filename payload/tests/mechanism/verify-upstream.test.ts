@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const repoCli = fileURLToPath(new URL('../../../cli.mjs', import.meta.url))
 if (existsSync(repoCli)) {
@@ -65,7 +65,7 @@ if (existsSync(repoCli)) {
   // 0.1.1-rc.2，而插件仓 coupling 引用它、其余包升 0.2.x——dsh-image-pathify 的
   // client.inject 声明，npm notarget 整体失败的实测）。
   test('pickUpstreamVersion falls back to the highest published version when the target is missing', async () => {
-    const cli = await import(repoCli) as { pickUpstreamVersion?: (target: string, versions: readonly string[]) => { version: string; fellBack: boolean } | null }
+    const cli = await import(pathToFileURL(repoCli).href) as { pickUpstreamVersion?: (target: string, versions: readonly string[]) => { version: string; fellBack: boolean } | null }
     assert.equal(typeof cli.pickUpstreamVersion, 'function', 'cli.mjs must export pickUpstreamVersion (guarded main)')
     const exact = cli.pickUpstreamVersion!('0.2.2-rc.1', ['0.1.0-rc.6', '0.2.1-rc.5', '0.2.2-rc.1'])
     assert.deepEqual(exact, { version: '0.2.2-rc.1', fellBack: false })
@@ -85,7 +85,7 @@ if (existsSync(repoCli)) {
   // `verify --upstream` 对它们只做存在性检查（不 pack、无探针）——上游改名/下架
   // 在装配阶段显式报错。提取与判定逻辑为纯函数，离线单测。
   test('manifestInjectModulesOf extracts sorted unique client.inject declarations', async () => {
-    const cli = await import(repoCli) as { manifestInjectModulesOf?: (root: string) => string[] }
+    const cli = await import(pathToFileURL(repoCli).href) as { manifestInjectModulesOf?: (root: string) => string[] }
     assert.equal(typeof cli.manifestInjectModulesOf, 'function', 'cli.mjs must export manifestInjectModulesOf (guarded main)')
     const root = mkdtempSync(join(tmpdir(), 'dsh-inject-'))
     try {
@@ -113,7 +113,7 @@ if (existsSync(repoCli)) {
   })
 
   test('verifyInjectModulesOnRegistry names the module and its declaring repo when the registry lacks it', async () => {
-    const cli = await import(repoCli) as {
+    const cli = await import(pathToFileURL(repoCli).href) as {
       verifyInjectModulesOnRegistry?: (
         modules: Map<string, readonly string[]>,
         runView: (name: string) => { status: number; stdout: string; stderr: string },
