@@ -1,0 +1,40 @@
+name: platform-test
+
+# 本仓机制测试的跨平台防线。与 real-plugin-probe 分层：语料回归（clone + install
+# 14 仓的重活）保持 ubuntu-only；本 job 只跑离线的 npm test（80 项，两分钟级），
+# 覆盖三类平台差异：spawnSync('npm') 在 Windows 需 shell、ESM import 需 file URL、
+# 路径分隔符 \ 与字符串断言。
+# 当前 windows 项为已知红基线（路径断言 2 项 + import 绝对路径 3 项，共 5 失败），
+# 修复后转绿作为验收——不要在红基线期间"顺手"跳过或放宽断言。
+on:
+  push: {}
+  workflow_dispatch: {}
+
+concurrency:
+  group: platform-test
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mechanism-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      # 无 .gitattributes：Windows runner 默认 autocrlf=true 会把文本文件转成
+      # CRLF，给字节级断言引入与本轮平台修复无关的幽灵变量。统一按 LF checkout。
+      - name: keep LF on checkout
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 对齐 engines（>=24.9.0）与 review 复测环境；语料 job 的 Node 25 不代表
+          # 受支持的下界。
+          node-version: '24.9.0'
+      - run: npm ci
+      - run: npm test
