@@ -988,6 +988,10 @@ function generate(suite: SeamSuite): Generated {
   for (const [id, fragments] of Object.entries(implicitFragments)) {
     const seal = implicitSeams.find(seam => seam.id === id)
     if (seal === undefined) throw new Error(`implicit fragment for unknown seam: ${id}`)
+    // G6（原则 8：静默的零结果不是成功）：空片段表不是证据——不 claim
+    // segment，让完整性断言把该 seam 判为无证据。空表曾 claim 出一个
+    // 零检查的空探针 segment，冒充「有类型片段」通过完整性检查。
+    if (fragments.length === 0) continue
     const seam = claim(
       `implicit:${id}`,
       `[implicit/type] ${id} ${seal.probe} (at ${seal.usedAt}) -> Audit ${seal.auditSection}`,
@@ -1624,7 +1628,7 @@ export function runSeamSuite(suite: SeamSuite): void {
       const fragment = generated.segments.has(`implicit:${seam.id}`)
       const delegations = suite.implicitDelegations?.[seam.id]
       assert.ok(
-        run !== undefined || fragment || delegations !== undefined,
+        run !== undefined || fragment || (delegations?.length ?? 0) > 0,
         `implicit seam '${seam.id}' has no probe, type fragment, or covering-test reference`,
       )
       if (run !== undefined) await run(context, environment)
@@ -1637,6 +1641,10 @@ export function runSeamSuite(suite: SeamSuite): void {
         )
       }
       for (const delegation of delegations ?? []) {
+        // G6：委托条目必须点名至少一个覆盖测试——空 tests 列表曾让检查
+        // 循环零迭代，一个没有任何测试引用的 delegation 冒充了证据。
+        assert.ok(delegation.tests.length > 0,
+          `delegation for '${seam.id}' (${delegation.file}) carries no test titles — an empty list is not evidence`)
         const text = readText(suite.root, delegation.file)
         for (const title of delegation.tests) {
           assert.ok(text.includes(title), `${delegation.file} must still contain the covering test: ${title}`)
