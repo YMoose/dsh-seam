@@ -268,9 +268,11 @@ for (const argument of files) {
   const zeroAnchorHint = outcome.segments.length === 0 && declaredDshCount > 0
     ? ` [no type-anchored surfaces: ${declaredDshCount} declared @deepseek-ai package(s) without explicit import/type usage — the type contract does not apply to pure-JS or manifest-injected coupling; runtime compatibility needs a runtime checker]`
     : ''
+  const ambientDiagnostics = outcome.ambient ?? []
   console.log(`${displayLabel}: ${verdict.pass}/${outcome.segments.length} probes compile clean`
     + (verdict.borrowed > 0 ? `, ${verdict.borrowed} borrowed surface(s)` : '')
     + (verdict.exempt > 0 ? `, ${verdict.exempt} runtime-contract surface(s) exempt` : '')
+    + (ambientDiagnostics.length > 0 ? `, ${ambientDiagnostics.length} ambient .d.ts diagnostic(s) listed` : '')
     + zeroAnchorHint
     + (typesRoot !== undefined ? ` [types-root: ${dshSeriesVersions(typesRoot)}]` : ''))
   for (const entry of borrowed) {
@@ -283,6 +285,12 @@ for (const argument of files) {
   for (const entry of exempted) {
     const sites = entry.count > 1 ? ` (${entry.count} sites)` : ''
     console.log(`  ~ exempt: ${entry.name} — ${entry.reason}${sites}`)
+  }
+  // L2a ambient 诊断（决策 19 A0）：列出可见、不阻断——advisory 通道，
+  // 绝不进 report（report 非空即置 failed）。上游改名致声明断裂曾是
+  // 逐字节无差异的假绿；A1（阻断）等真实语料噪音数据再议。
+  for (const problem of ambientDiagnostics) {
+    console.log(`  ~ ambient .d.ts diagnostic (listed, not gating): ${problem}`)
   }
   for (const line of report) console.log(`  ✖ ${line}`)
   if (report.length > 0) failed = true
