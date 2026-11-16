@@ -96,6 +96,12 @@ DSH 生态存在四项客观现实，构成了本工具链各模块解决的具�
 - **不自动混入未导入的包**：不从 `package.json` 强行加载源码未显式导入的包来拼凑全局类型环境——那样既脆弱，又会掩盖未声明 `inject` 的跨插件隐式耦合；
 - **利用编译器的属性缺失报错识别跨插件借用**：生成的类型检查代码只在插件显式声明的 L1–L2 类型环境中编译，利用编译器产生的 `TS2339`（属性不存在）对照 `coupling.borrowed` 与 `injectedServices` 逐段归因（`SegmentDisposition`），同时实现“合法跨插件服务借用不误报”与“原本显式声明的字段被上游删除（`[anchored -> borrowed]`）精准报错”。
 
+### 原则 8：验证是一条有序管道，每道门失败立即就地报错
+
+绿（exit 0）必须由四道顺序关卡共同背书：**输入门**（文件存在、可解析、schema 受支持）→ **环境门**（依赖装了什么、npm 跑得起来、类型树来源清楚）→ **执行门**（每个目标实际执行，无超时、无静默跳过，结果行数与目标数一致）→ **构成门**（探针数量符合预期；为零必须显式归因：skip / 零锚定 / 无目标）。
+
+每道门失败**立即就地报错（fail-fast）**，两个方向都禁止：不得把失败流入后续阶段冒充结果（环境故障冒充查询结论、skip 短路吃掉输入错误），也不得静默降级后继续（登记表损坏转空表、pin 契约不生成 pin 探针）。多目标场景按目标隔离失败、汇总退出（一次运行给出全部排障信息）；全目标共享的前置（如 `--upstream` 的 types-root 装配）失败则立即整体退出。**静默的零结果不是成功**——豁免与跳过全部透明（与原则 6 同族）。动因：外部 review 实测的假绿家族（不存在的契约文件 exit 0、npm 启动失败被解释成 registry 不存在、pin 探针丢失后全绿、CI harness 采纳崩溃残留输出）全是「成功只等于没收集到诊断」这一定义缺位的实例。
+
 ---
 
 ## 4. 关键架构决策记录
@@ -120,6 +126,9 @@ DSH 生态存在四项客观现实，构成了本工具链各模块解决的具�
 | 16 | dist-tag 仅用于“跟随”（`bump` 选取升级目标）；一切兼容性判断、统计与版本发现一律以具体版本号做 semver 比较，不按 tag 名判断；tag 指向的版本不比 `latest` 新时丢弃并记录原因 | 相邻工具 dsh-plugin-health 曾按 tag 名选兼容表版本列：`alpha` 一度指向比 `latest` 旧五天的版本，135 个插件被误判“被拒”，其修复改为 semver 比较 + 丢弃过期 tag 并记录原因；本项目 `verify` 已锚定实际安装版本、`bump` 降级守卫按 semver 比较，本决策将现状固化为明文规则，并约束 Phase 4 巡检的版本发现 | 已落地（规则固化） |
 | 17 | typescript 解析守卫：只接受带经典 Compiler API 的 JS 版 typescript（5.x/6.x）；锚点链中途遇到无经典 API 的包（原生 7.x 仅版本存根）则跳过继续向后尝试，全部锚点均不可用时显式报错退出并点名解析到的版本与路径 | typescript@7 npm 包（Go 原生实现）根导出仅 4 行版本存根（`lib/version.cjs`），无 `ts.SyntaxKind`/`createProgram`；插件生态已出现 pin `^7.0.2` 的仓（语料 CI 首轮事故：dsh-context/dsh-market/dsh-wallpaper-engine 以 `Cannot read properties of undefined` 天书崩溃）；Level 2 消费仓的 payload 解析锚点优先命中本仓 node_modules，接入者升级原生版当天即踩雷；`verify` 侧守卫先于 engine 候选加载，同时覆盖 engine 直导与转译两条路径 | 已落地 |
 | 18 | 多版本验证的类型重定向用「混合符号链接树」而非 `paths`：探针写入临时目录，其 `node_modules/@deepseek-ai/` 下 DSH 系列包逐个链接到 `--types-root`，其余 `@deepseek-ai/*`（cordis 等）链接到本仓安装，配 `preserveSymlinks` 编译 | 实测 `compilerOptions.paths`（含绝对路径与 baseUrl 两种写法）在 NodeNext 下不生效（TS2307）；且 DSH 包对 cordis 的 `declare module '@deepseek-ai/cordis'` 事件增强（hook 探针的 `keyof Events` 依赖它）要求增强方与被增强方同处一棵解析树，否则增强静默丢失、hook 探针全红——单链接整目录方案在 dsh-log-enhance 真实集成验证中暴露此缺陷；混合树让“DSH 系列换版本、独立包用本地”落在自然解析语义上 | 已落地 |
+| 19 | ambient `.d.ts`（L2a）内部的诊断按 A0 处理：在 verify 输出中列出（可见、透明），但不影响退出码（不阻断）；是否升级为阻断（A1）等真实语料的噪音数据再议 | 历史实现静默丢弃 L2a 内诊断（连 unattributed 都不进），与 L2b（源码内 declare module，断裂可见）不一致且无文档；实测上游改名致 L2a 声明断裂时 verify 输出逐字节无差异（假绿）。当初静音的动机是防手写声明文件的噪音假红，但 `.d.ts` 内诊断仅有三类——上游引用断裂（要抓的）、语法笔误（插件仓自身 tsc 也会红）、合并冲突（真问题）；A0 先消灭静默，语料仅 2 仓使用 L2a（image-pathify、skills-manager），数据可得性极高 | A0 已决策（原则 8），待实现 |
+| 20 | 漂移门禁（`scan --check`）做语义比较：两边深度排序对象键后再比（只排对象键，数组保持原序——数组语义有序）；幂等写入（`--write` 的「未变不重写」）保持字节级，语义相同但字节不同时照常重写归位为工具标准形态 | 键序不携带源码变化信息，内容未变而判红属于「拦假问题」（原则 6）；工具输出的字节稳定性由幂等写入测试负责、版本溯源由 generator 元数据负责，都不该由漂移门禁兜。两层各司其职后工作流自然：手工格式化 coupling.json → check 绿 → 下次 write 自动归位。coupling.json 全部消费者已核查：需要确定顺序处均已显式 `.sort()`（如包名集合）或顺序无关（探针独立编译、Set 比较） | 已决策，待实现 |
+| 21 | 版本比较统一接受 build metadata（`+build.x` 按 semver 优先级规则解析后忽略，不参与排序）；`pickUpstreamVersion` 对不可解析目标整体返回 null，绝不进入回落比较；npm 子进程统一 `shell: true` 并三态判定（spawn 失败/命令不存在 → cannot run；非 404 非零退出 → cannot query；仅 npm 错误码 E404 → registry 不存在） | 实测 `+build` 目标使 compareSemver 返回 0，在回落循环被曲解为「≤ target」选出超前版本；「unparseable→0」语义在排名场景正确、在回落场景有害，故入口拦截。spawn 层：Windows 无 shell 起 `npm.cmd` 必 ENOENT，`shell: true` 双平台通吃；而 shell 把「npm 缺失」转成 exit 127 + "npm: not found"，若按字样匹配 404 会再次把环境故障读成 registry 结论（PATH 摘除实测逮住）——三态判定与原则 8 环境门 fail-fast 对应 | 已落地 |
 
 ---
 

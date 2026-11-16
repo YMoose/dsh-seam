@@ -116,6 +116,24 @@ test('an acknowledged suspect passes --check', () => {
   }
 })
 
+// AGENTS §2.4：登记表「存在但导出结构不可读」与语法损坏同为损坏，必须判红。
+// 历史缺陷：loadRegistry 把非数组导出静默转成空表——零 suspect 的仓配上
+// `IMPLICIT_SEAMS = {}` 会输出 all acknowledged 并 exit 0（假绿，实测复现）。
+test('a registry exporting a non-array IMPLICIT_SEAMS is corrupt and fails --check', () => {
+  const root = fixtureRoot('')
+  try {
+    const written = runScript(['--write'], root)
+    assert.equal(written.status, 0, `${written.stdout}\n${written.stderr}`)
+    writeFileSync(join(root, 'tests/contracts/implicit-seams.ts'), 'export const IMPLICIT_SEAMS = {}\n')
+    const broken = runScript(['--check'], root)
+    assert.equal(broken.status, 1,
+      'a structurally corrupt registry must fail, not silently degrade to an empty one')
+    assert.match(broken.stdout + broken.stderr, /cannot verify implicit-contract suspects|IMPLICIT_SEAMS/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 interface EngineApi {
   compareVersions(a: string, b: string): number
   loadCoupling(root: string): unknown

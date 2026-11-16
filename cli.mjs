@@ -328,10 +328,12 @@ const shortRef = ref => ref.slice(0, 7)
 
 /** Semver comparison for tags (design.md decision 16): tags are parsed into
  *  concrete versions before any comparison; unparseable tags never rank.
+ *  Build metadata (`+build.x`) is parsed and ignored per semver precedence
+ *  rules (it never participates in ordering).
  *  Returns positive when a > b, negative when a < b, 0 on equality. */
 function compareSemver(a, b) {
   const parse = tag => {
-    const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(tag)
+    const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(tag)
     return match === null ? null : {
       core: [Number(match[1]), Number(match[2]), Number(match[3])],
       pre: match[4] === undefined ? [] : match[4].split('.'),
@@ -368,6 +370,11 @@ function compareSemver(a, b) {
  *  连一个 ≤ 目标的版本都没有（比目标还新）或一个版本都没发过时返回 null，
  *  由调用方按整体失败处理。 */
 export function pickUpstreamVersion(target, versions) {
+  // 输入门 fail-fast（design 原则 8）：不可解析的目标绝不进入回落比较——
+  // compareSemver 对 unparseable 返回 0，在回落循环的 `>0 continue` 语境里会
+  // 被曲解为「≤ target」，导致所有候选入选、选出超前版本（实测 +build 目标
+  // 选出 0.3.0）。
+  if (!/^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(target)) return null
   const published = [...versions]
   if (published.includes(target)) return { version: target, fellBack: false }
   let best = null
@@ -656,13 +663,32 @@ export function manifestInjectModulesOf(root) {
  *  由宿主运行时注入、无探针消费、无版本语义，因此只 `npm view` 确认仍在
  *  registry 上（上游改名/下架显式报错），不参与 lockstep pack。runView 由
  *  调用方注入（真实场景 spawn `npm view <name> version --json`；测试注入
- *  假 runner 离线验证判定与报错内容）。返回 null = 全部存在。 */
+ *  假 runner 离线验证判定与报错内容）。返回 null = 全部存在。
+ *
+ *  三态判定（design 原则 8 环境门 fail-fast）：环境故障绝不冒充 registry
+ *  结论——spawn 失败（Windows 无 shell 起 npm / PATH 异常，status null）与
+ *  非 404 的 npm 非零退出（网络超时等）都是「什么都没查成」，报 cannot run /
+ *  cannot query，不谈 registry、不指引用户改 manifest；只有明确的 404 才是
+ *  registry 的「不存在」判定。 */
 export function verifyInjectModulesOnRegistry(modules, runView) {
   for (const [name, repos] of modules) {
     const view = runView(name)
+    // 「npm 没跑起来」三形态：spawn 层失败（error/status null）、POSIX shell 的
+    // command-not-found（127）、Windows cmd 的 command-not-found（9009）。
+    if (view.error !== undefined || view.status === null || view.status === 127 || view.status === 9009) {
+      return `cannot run npm to check manifest-injected module '${name}' (declared in ${repos.join(', ')}) — `
+        + `environment failure, nothing was queried on the registry\n${view.error ?? ''}\n${view.stderr ?? ''}`
+    }
     if (view.status !== 0 || String(view.stdout ?? '').trim() === '' || String(view.stdout ?? '').trim() === 'undefined') {
-      return `manifest dsh.client.inject module '${name}' (declared in ${repos.join(', ')}) is not found on the npm registry — `
-        + `upstream may have renamed or unpublished it; update dsh.client.inject in that package.json\n${view.stderr ?? ''}`
+      const stderr = String(view.stderr ?? '')
+      // 只认 npm 的错误码 E404（404 响应的固定输出形态）；"not found" 字样
+      // 同样出现在 shell 的 command-not-found 里，不能作为判定依据。
+      if (/E404/.test(stderr)) {
+        return `manifest dsh.client.inject module '${name}' (declared in ${repos.join(', ')}) is not found on the npm registry — `
+          + `upstream may have renamed or unpublished it; update dsh.client.inject in that package.json\n${stderr}`
+      }
+      return `cannot query the registry for manifest-injected module '${name}' (declared in ${repos.join(', ')}) — `
+        + `npm exited ${view.status}; nothing was concluded about the module\n${stderr}`
     }
   }
   return null
@@ -715,7 +741,9 @@ function buildUpstreamTypesRoot(repoRoots, spec) {
   if (injectModules.size > 0) {
     const injectFailure = verifyInjectModulesOnRegistry(
       injectModules,
-      name => spawnSync('npm', ['view', name, 'version', '--json'], { encoding: 'utf8', timeout: 60_000 }),
+      // shell:true 对 Windows 必需（npm 是 .cmd 垫片，无 shell 会 ENOENT）；
+      // 参数均为固定包名/版本，无注入面。
+      name => spawnSync('npm', ['view', name, 'version', '--json'], { encoding: 'utf8', timeout: 60_000, shell: true }),
     )
     if (injectFailure !== null) failUsage(injectFailure)
     console.log(`==> upstream: manifest-injected module(s) verified present on the registry: ${[...injectModules.keys()].sort().join(', ')}`)
@@ -724,7 +752,7 @@ function buildUpstreamTypesRoot(repoRoots, spec) {
   const listed = [...names].sort()
   let version = spec
   if (!/^\d+\.\d+\.\d+(?:[-+].+)?$/.test(spec)) {
-    const view = spawnSync('npm', ['view', listed[0], 'dist-tags', '--json'], { encoding: 'utf8', timeout: 60_000 })
+    const view = spawnSync('npm', ['view', listed[0], 'dist-tags', '--json'], { encoding: 'utf8', timeout: 60_000, shell: true })
     if (view.status !== 0) failUsage(`cannot resolve tag '${spec}' (npm view ${listed[0]} dist-tags):\n${view.stderr}`)
     let tags = {}
     try { tags = JSON.parse(view.stdout) } catch { /* fall through to the not-found message */ }
@@ -746,7 +774,7 @@ function buildUpstreamTypesRoot(repoRoots, spec) {
     // 还参与 lockstep 的包；退出者保持 ≤ 目标的最新形态，即插件作者环境里
     // 它的真实形态，超前回落会把未来版本的破坏混进本次评估）。
     if (!versionsCache.has(name)) {
-      const view = spawnSync('npm', ['view', name, 'versions', '--json'], { encoding: 'utf8', timeout: 60_000 })
+      const view = spawnSync('npm', ['view', name, 'versions', '--json'], { encoding: 'utf8', timeout: 60_000, shell: true })
       if (view.status !== 0) {
         failure = `cannot list versions of ${name} (npm view ${name} versions):\n${view.stderr}`
         break
@@ -764,7 +792,7 @@ function buildUpstreamTypesRoot(repoRoots, spec) {
     const packVersion = picked.version
     const target = join(typesRoot, '@deepseek-ai', name.slice('@deepseek-ai/'.length))
     mkdirSync(target, { recursive: true })
-    const packed = spawnSync('npm', ['pack', `${name}@${packVersion}`, '--pack-destination', typesRoot], { encoding: 'utf8', timeout: 180_000 })
+    const packed = spawnSync('npm', ['pack', `${name}@${packVersion}`, '--pack-destination', typesRoot], { encoding: 'utf8', timeout: 180_000, shell: true })
     const tarball = String(packed.stdout.trim().split('\n').pop())
     if (packed.status !== 0 || !tarball.endsWith('.tgz') || !existsSync(join(typesRoot, tarball))) {
       failure = `cannot fetch ${name}@${packVersion} via npm pack:\n${packed.stderr ?? ''}`
