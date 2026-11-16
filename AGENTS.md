@@ -66,6 +66,8 @@ dsh-seam/
 - **必须使用 `Exclude`，禁用 `NonNullable`**：对 `pin: true`（未加空值保护的直接字段读取），生成的类型检查代码必须使用 `type _Pin = Exclude<typeof _probe, null | undefined>` 来检查字段非空。**严禁改用 `NonNullable<typeof _probe>`**——在 TypeScript 中 `NonNullable<T> = T & {}`，当上游字段类型为 `unknown` 时会退化为 `{}`，导致合法的 `unknown` 字段读取误报 `TS2322`。
 - **豁免条件**：源码中带有可选链 `?.`、非空断言 `!`、显式类型转换或前置空值判断时，`pin` 记为 `false`。
 - **传给辅助函数的可空参数不在扫描器中静默豁免**：当源码把可能为空的字段直接传给内部自带空值检查的辅助函数（如 `requireAgent(exec.agent)`）时，单文件 AST 扫描无法确认被调函数的内部实现；此类情况统一由插件仓在 `runSeamSuite({ overrides })` 中显式设置 `pin: false`。
+- **守卫 kind 的重放必须与源码写法在 TS 收窄语义下等强**：`definedUndefined` / `definedNull` / `definedBoth` / `nonnull` / `truthy` 各 kind 的重放行（`guardLine`）必须恰好复现该写法真实证明的收窄——半映射禁止：记强了假绿（漏真漂移，原则 8 禁止），记弱了假红（冤枉好代码）。语义依据 TS 官方规范：严格比较只查指定空值，宽松 `==`/`!=` 配任一空值两者都查。旧契约的 `defined` 按 `definedUndefined` 语义兼容读取（忠实于旧扫描器的识别范围）。新增 kind 必须过 design 决策 22 的准入三条款（自足性 / 精确性 / 域限定）并配机制测试三向锚定（健康绿 + 守卫挡不住的加宽红 + 字段删除红）。
+- **ambient 收集范围两侧必须一致**：扫描器 `listDtsFiles` 与引擎 `collectAmbientDtsFiles` 都收集「仓库根 `*.d.ts` + `src/` 递归 + `types/` 递归」——任何一侧单独改动都会造成「扫描器看到的声明与探针程序看到的声明不一致」（漏记增强 / import 解析不到的假红），改范围必须两侧同步。
 
 ### 2.4 级别判断与透明输出（原则 4 / 原则 6）
 
